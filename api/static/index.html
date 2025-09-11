@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consola SQL Parser - CS2702 UTEC</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗄️</text></svg>">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffffff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: grid;
+            grid-template-areas: 
+                "header header"
+                "sidebar main"
+                "sidebar console";
+            grid-template-rows: 60px 1fr 300px;
+            grid-template-columns: 300px 1fr;
+            height: 100vh;
+            gap: 1px;
+            background: #1a1a1a;
+        }
+
+        /* Header */
+        .header {
+            grid-area: header;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.1);
+            padding: 8px 15px;
+            border-radius: 20px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4ade80;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Sidebar */
+        .sidebar {
+            grid-area: sidebar;
+            background: #2d3748;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .sidebar h3 {
+            color: #4ade80;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            border-bottom: 2px solid #4ade80;
+            padding-bottom: 5px;
+        }
+
+        .tables-list, .examples-list {
+            list-style: none;
+            margin-bottom: 25px;
+        }
+
+        .tables-list li, .examples-list li {
+            padding: 8px 12px;
+            margin: 5px 0;
+            background: rgba(255,255,255,0.05);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .tables-list li:hover, .examples-list li:hover {
+            background: rgba(255,255,255,0.1);
+            transform: translateX(5px);
+        }
+
+        .example-query {
+            font-size: 0.8rem;
+            color: #a0aec0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Main Content */
+        .main-content {
+            grid-area: main;
+            background: #1a202c;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .query-input-section {
+            margin-bottom: 20px;
+        }
+
+        .query-input-section h3 {
+            color: #4ade80;
+            margin-bottom: 10px;
+        }
+
+        .sql-input-container {
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        #sqlInput {
+            width: 100%;
+            min-height: 120px;
+            background: #2d3748;
+            border: 2px solid #4a5568;
+            border-radius: 8px;
+            color: #ffffff;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+            padding: 15px;
+            resize: vertical;
+            transition: border-color 0.3s ease;
+        }
+
+        #sqlInput:focus {
+            outline: none;
+            border-color: #4ade80;
+            box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.1);
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Results Area */
+        .results-area {
+            background: #2d3748;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 200px;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #4a5568;
+        }
+
+        .result-content {
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .success-result {
+            color: #4ade80;
+        }
+
+        .error-result {
+            color: #ef4444;
+        }
+
+        .info-result {
+            color: #60a5fa;
+        }
+
+        /* Console */
+        .console {
+            grid-area: console;
+            background: #111827;
+            border-top: 2px solid #374151;
+        }
+
+        .console-header {
+            background: #1f2937;
+            padding: 10px 20px;
+            border-bottom: 1px solid #374151;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .console-content {
+            padding: 15px 20px;
+            height: calc(300px - 45px);
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .console-line {
+            margin: 3px 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .console-timestamp {
+            color: #6b7280;
+            font-size: 11px;
+            min-width: 80px;
+        }
+
+        .console-message {
+            flex: 1;
+        }
+
+        .console-success { color: #4ade80; }
+        .console-error { color: #ef4444; }
+        .console-info { color: #60a5fa; }
+        .console-warning { color: #fbbf24; }
+
+        /* Loading Animation */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #4ade80;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                grid-template-areas: 
+                    "header"
+                    "main"
+                    "console";
+                grid-template-columns: 1fr;
+                grid-template-rows: 60px 1fr 250px;
+            }
+            
+            .sidebar {
+                display: none;
+            }
+        }
+
+        /* Syntax highlighting */
+        .sql-keyword { color: #c792ea; font-weight: bold; }
+        .sql-string { color: #c3e88d; }
+        .sql-number { color: #f78c6c; }
+        .sql-comment { color: #546e7a; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🗄️ Consola SQL Parser - CS2702 UTEC</h1>
+            <div class="status-indicator">
+                <div class="status-dot"></div>
+                <span id="statusText">Conectado</span>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div>
+                <h3>📊 Tablas Activas</h3>
+                <ul class="tables-list" id="tablesList">
+                    <li style="color: #6b7280; font-style: italic;">No hay tablas creadas</li>
+                </ul>
+            </div>
+
+            <div>
+                <h3>📝 Ejemplos SQL</h3>
+                <ul class="examples-list" id="examplesList">
+                    <li onclick="loadExample('CREATE TABLE')">
+                        <strong>CREATE TABLE</strong>
+                        <div class="example-query">Crear nueva tabla</div>
+                    </li>
+                    <li onclick="loadExample('INSERT')">
+                        <strong>INSERT</strong>
+                        <div class="example-query">Insertar datos</div>
+                    </li>
+                    <li onclick="loadExample('SELECT')">
+                        <strong>SELECT</strong>
+                        <div class="example-query">Consultar datos</div>
+                    </li>
+                    <li onclick="loadExample('DELETE')">
+                        <strong>DELETE</strong>
+                        <div class="example-query">Eliminar datos</div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="query-input-section">
+                <h3>💻 Editor de Consultas SQL</h3>
+                <div class="sql-input-container">
+                    <textarea 
+                        id="sqlInput" 
+                        placeholder="Escribe tu consulta SQL aquí...&#10;&#10;Ejemplos:&#10;CREATE TABLE Restaurantes (id INT KEY INDEX SEQ, nombre VARCHAR[50]);&#10;INSERT INTO Restaurantes VALUES (1, &quot;Mi Restaurante&quot;);&#10;SELECT * FROM Restaurantes;"
+                    ></textarea>
+                </div>
+                <div class="input-actions">
+                    <button class="btn btn-primary" onclick="executeQuery()" id="executeBtn">
+                        ▶️ Ejecutar
+                    </button>
+                    <button class="btn btn-secondary" onclick="validateQuery()">
+                        ✅ Validar
+                    </button>
+                    <button class="btn btn-secondary" onclick="parseQuery()">
+                        🔍 Parsear
+                    </button>
+                    <button class="btn btn-danger" onclick="clearInput()">
+                        🗑️ Limpiar
+                    </button>
+                </div>
+            </div>
+
+            <div class="results-area">
+                <div class="result-header">
+                    <h3>📋 Resultados</h3>
+                    <small id="executionTime"></small>
+                </div>
+                <div class="result-content" id="resultContent">
+                    <div style="color: #6b7280; font-style: italic;">
+                        Los resultados de tu consulta aparecerán aquí...
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Console -->
+        <div class="console">
+            <div class="console-header">
+                <span>🖥️ Consola del Sistema</span>
+                <button class="btn btn-danger" onclick="clearConsole()" style="padding: 5px 10px; font-size: 12px;">
+                    Limpiar
+                </button>
+            </div>
+            <div class="console-content" id="consoleContent">
+                <div class="console-line">
+                    <span class="console-timestamp">00:00:00</span>
+                    <span class="console-message console-info">🚀 Consola SQL Parser iniciada</span>
+                </div>
+                <div class="console-line">
+                    <span class="console-timestamp">00:00:01</span>
+                    <span class="console-message console-success">✅ Conectado al servidor API</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Base URL
+        const API_BASE = '/api';
+        
+        // Estado global
+        let isExecuting = false;
+        
+        // Ejemplos de consultas SQL organizadas por tipo
+        const sqlExamples = {
+            'CREATE TABLE': [
+                'CREATE TABLE Restaurantes (id INT KEY INDEX SEQ, nombre VARCHAR[50] INDEX BTree, ubicacion ARRAY[FLOAT] INDEX RTree);',
+                'CREATE TABLE Productos (codigo INT KEY INDEX Hash, nombre VARCHAR[100], precio INT);',
+                'CREATE TABLE Clientes FROM FILE "clientes.csv" USING INDEX ISAM("dni");'
+            ],
+            'INSERT': [
+                'INSERT INTO Restaurantes VALUES (1, "La Bella Italia", [12.0462, -77.0428]);',
+                'INSERT INTO Productos VALUES (101, "Pizza Margherita", 25);'
+            ],
+            'SELECT': [
+                'SELECT * FROM Restaurantes;',
+                'SELECT * FROM Productos WHERE codigo = 101;',
+                'SELECT * FROM Productos WHERE precio BETWEEN 20 AND 50;',
+                'SELECT * FROM Restaurantes WHERE ubicacion IN ([12.05, -77.04], 0.01);'
+            ],
+            'DELETE': [
+                'DELETE FROM Productos WHERE codigo = 101;'
+            ]
+        };
+
+        // Inicializar la aplicación
+        document.addEventListener('DOMContentLoaded', function() {
+            logToConsole('🎯 Interfaz cargada correctamente', 'success');
+            checkServerStatus();
+            loadTables();
+            
+            // Auto-refresh de tablas cada 30 segundos
+            setInterval(loadTables, 30000);
+        });
+
+        // Función para ejecutar consultas SQL
+        async function executeQuery() {
+            const sqlInput = document.getElementById('sqlInput');
+            const sql = sqlInput.value.trim();
+            
+            if (!sql) {
+                logToConsole('⚠️ Por favor ingresa una consulta SQL', 'warning');
+                return;
+            }
+
+            if (isExecuting) {
+                logToConsole('⏳ Ya se está ejecutando una consulta', 'warning');
+                return;
+            }
+
+            setExecuting(true);
+            logToConsole(`📤 Ejecutando: ${sql.substring(0, 50)}${sql.length > 50 ? '...' : ''}`, 'info');
+
+            try {
+                const response = await fetch(`${API_BASE}/execute`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sql: sql,
+                        validate: true
+                    })
+                });
+
+                const result = await response.json();
+                displayResult(result);
+                
+                if (result.success) {
+                    logToConsole(`✅ Consulta ejecutada exitosamente (${result.execution_time_ms.toFixed(2)}ms)`, 'success');
+                    loadTables(); // Refrescar lista de tablas
+                } else {
+                    logToConsole(`❌ Error en consulta: ${result.errors.join(', ')}`, 'error');
+                }
+
+            } catch (error) {
+                logToConsole(`💥 Error de conexión: ${error.message}`, 'error');
+                displayResult({
+                    success: false,
+                    errors: [`Error de conexión: ${error.message}`],
+                    execution_time_ms: 0
+                });
+            } finally {
+                setExecuting(false);
+            }
+        }
+
+        // Función para validar consultas SQL
+        async function validateQuery() {
+            const sqlInput = document.getElementById('sqlInput');
+            const sql = sqlInput.value.trim();
+            
+            if (!sql) {
+                logToConsole('⚠️ Por favor ingresa una consulta SQL para validar', 'warning');
+                return;
+            }
+
+            logToConsole('🔍 Validando consulta...', 'info');
+
+            try {
+                const encodedSql = encodeURIComponent(sql);
+                const response = await fetch(`${API_BASE}/validate/${encodedSql}`);
+                const result = await response.json();
+                
+                displayValidationResult(result);
+                
+                if (result.valid) {
+                    logToConsole('✅ Consulta válida', 'success');
+                } else {
+                    logToConsole(`❌ Consulta inválida: ${result.errors.join(', ')}`, 'error');
+                }
+
+            } catch (error) {
+                logToConsole(`💥 Error validando: ${error.message}`, 'error');
+            }
+        }
+
+        // Función para parsear consultas SQL
+        async function parseQuery() {
+            const sqlInput = document.getElementById('sqlInput');
+            const sql = sqlInput.value.trim();
+            
+            if (!sql) {
+                logToConsole('⚠️ Por favor ingresa una consulta SQL para parsear', 'warning');
+                return;
+            }
+
+            logToConsole('🔧 Parseando consulta...', 'info');
+
+            try {
+                const encodedSql = encodeURIComponent(sql);
+                const response = await fetch(`${API_BASE}/parse/${encodedSql}`);
+                const result = await response.json();
+                
+                displayParseResult(result);
+                
+                if (result.success) {
+                    logToConsole('✅ Consulta parseada exitosamente', 'success');
+                } else {
+                    logToConsole(`❌ Error parseando: ${result.error}`, 'error');
+                }
+
+            } catch (error) {
+                logToConsole(`💥 Error parseando: ${error.message}`, 'error');
+            }
+        }
+
+        // Función para cargar ejemplos
+        function loadExample(type) {
+            const examples = sqlExamples[type];
+            if (examples && examples.length > 0) {
+                const randomExample = examples[Math.floor(Math.random() * examples.length)];
+                document.getElementById('sqlInput').value = randomExample;
+                logToConsole(`📝 Cargado ejemplo de ${type}`, 'info');
+            }
+        }
+
+        // Función para limpiar el input
+        function clearInput() {
+            document.getElementById('sqlInput').value = '';
+            document.getElementById('resultContent').innerHTML = '<div style="color: #6b7280; font-style: italic;">Los resultados de tu consulta aparecerán aquí...</div>';
+            document.getElementById('executionTime').textContent = '';
+            logToConsole('🗑️ Editor limpiado', 'info');
+        }
+
+        // Función para mostrar resultados
+        function displayResult(result) {
+            const resultContent = document.getElementById('resultContent');
+            const executionTime = document.getElementById('executionTime');
+            
+            executionTime.textContent = `⏱️ ${result.execution_time_ms.toFixed(2)}ms`;
+            
+            if (result.success) {
+                resultContent.innerHTML = `
+                    <div class="success-result">
+                        <strong>✅ Éxito</strong>
+                        <pre>${JSON.stringify(result.result, null, 2)}</pre>
+                        ${result.query_type ? `<div style="margin-top: 10px;"><strong>Tipo:</strong> ${result.query_type}</div>` : ''}
+                        ${result.parsed_query ? `<div style="margin-top: 10px;"><strong>AST:</strong> ${result.parsed_query}</div>` : ''}
+                    </div>
+                `;
+            } else {
+                resultContent.innerHTML = `
+                    <div class="error-result">
+                        <strong>❌ Error</strong>
+                        <div style="margin-top: 10px;">
+                            ${result.errors.map(error => `<div>• ${error}</div>`).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Función para mostrar resultados de validación
+        function displayValidationResult(result) {
+            const resultContent = document.getElementById('resultContent');
+            const executionTime = document.getElementById('executionTime');
+            
+            executionTime.textContent = '🔍 Validación';
+            
+            if (result.valid) {
+                resultContent.innerHTML = `
+                    <div class="success-result">
+                        <strong>✅ Consulta Válida</strong>
+                        <div style="margin-top: 10px;">La consulta SQL tiene sintaxis y semántica correctas.</div>
+                    </div>
+                `;
+            } else {
+                resultContent.innerHTML = `
+                    <div class="error-result">
+                        <strong>❌ Consulta Inválida</strong>
+                        <div style="margin-top: 10px;">
+                            ${result.errors.map(error => `<div>• ${error}</div>`).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Función para mostrar resultados de parsing
+        function displayParseResult(result) {
+            const resultContent = document.getElementById('resultContent');
+            const executionTime = document.getElementById('executionTime');
+            
+            executionTime.textContent = '🔧 Parsing';
+            
+            if (result.success) {
+                resultContent.innerHTML = `
+                    <div class="info-result">
+                        <strong>🔧 AST Generado</strong>
+                        <pre style="margin-top: 10px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 5px; overflow-x: auto;">${result.parsed_query}</pre>
+                    </div>
+                `;
+            } else {
+                resultContent.innerHTML = `
+                    <div class="error-result">
+                        <strong>❌ Error de Parsing</strong>
+                        <div style="margin-top: 10px;">${result.error}</div>
+                    </div>
+                `;
+            }
+        }
+
+        // Función para cargar tablas
+        async function loadTables() {
+            try {
+                const response = await fetch(`${API_BASE}/tables`);
+                const tables = await response.json();
+                
+                const tablesList = document.getElementById('tablesList');
+                
+                if (tables.length === 0) {
+                    tablesList.innerHTML = '<li style="color: #6b7280; font-style: italic;">No hay tablas creadas</li>';
+                } else {
+                    tablesList.innerHTML = tables.map(table => 
+                        `<li onclick="showTableInfo('${table}')" title="Click para ver detalles">
+                            📋 ${table}
+                        </li>`
+                    ).join('');
+                }
+                
+            } catch (error) {
+                logToConsole(`💥 Error cargando tablas: ${error.message}`, 'error');
+            }
+        }
+
+        // Función para mostrar información de tabla
+        async function showTableInfo(tableName) {
+            try {
+                const response = await fetch(`${API_BASE}/tables/${tableName}`);
+                const tableInfo = await response.json();
+                
+                const resultContent = document.getElementById('resultContent');
+                const executionTime = document.getElementById('executionTime');
+                
+                executionTime.textContent = '📋 Info de tabla';
+                
+                resultContent.innerHTML = `
+                    <div class="info-result">
+                        <strong>📋 Tabla: ${tableInfo.name}</strong>
+                        <div style="margin-top: 15px;">
+                            <strong>Columnas (${tableInfo.columns.length}):</strong>
+                            <div style="margin-top: 10px;">
+                                ${tableInfo.columns.map(col => `
+                                    <div style="margin: 5px 0; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                                        <strong>${col.name}</strong>: ${col.type}${col.size ? `[${col.size}]` : ''}
+                                        ${col.is_key ? ' <span style="color: #fbbf24;">🔑 KEY</span>' : ''}
+                                        ${col.index ? ` <span style="color: #60a5fa;">📚 INDEX ${col.index}</span>` : ''}
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                logToConsole(`📋 Información de tabla ${tableName} mostrada`, 'info');
+                
+            } catch (error) {
+                logToConsole(`💥 Error obteniendo info de tabla: ${error.message}`, 'error');
+            }
+        }
+
+        // Función para verificar estado del servidor
+        async function checkServerStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`);
+                const status = await response.json();
+                
+                document.getElementById('statusText').textContent = 'Conectado';
+                logToConsole(`🟢 Servidor activo - ${status.tables_count} tablas`, 'success');
+                
+            } catch (error) {
+                document.getElementById('statusText').textContent = 'Desconectado';
+                logToConsole('🔴 Error de conexión con el servidor', 'error');
+            }
+        }
+
+        // Función para el estado de ejecución
+        function setExecuting(executing) {
+            isExecuting = executing;
+            const btn = document.getElementById('executeBtn');
+            
+            if (executing) {
+                btn.innerHTML = '<div class="loading"></div> Ejecutando...';
+                btn.disabled = true;
+            } else {
+                btn.innerHTML = '▶️ Ejecutar';
+                btn.disabled = false;
+            }
+        }
+
+        // Función para logging en consola
+        function logToConsole(message, type = 'info') {
+            const consoleContent = document.getElementById('consoleContent');
+            const timestamp = new Date().toLocaleTimeString();
+            
+            const logLine = document.createElement('div');
+            logLine.className = 'console-line';
+            logLine.innerHTML = `
+                <span class="console-timestamp">${timestamp}</span>
+                <span class="console-message console-${type}">${message}</span>
+            `;
+            
+            consoleContent.appendChild(logLine);
+            consoleContent.scrollTop = consoleContent.scrollHeight;
+        }
+
+        // Función para limpiar consola
+        function clearConsole() {
+            const consoleContent = document.getElementById('consoleContent');
+            consoleContent.innerHTML = `
+                <div class="console-line">
+                    <span class="console-timestamp">${new Date().toLocaleTimeString()}</span>
+                    <span class="console-message console-info">🗑️ Consola limpiada</span>
+                </div>
+            `;
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(event) {
+            // Ctrl+Enter para ejecutar
+            if (event.ctrlKey && event.key === 'Enter') {
+                event.preventDefault();
+                executeQuery();
+            }
+            
+            // Ctrl+K para limpiar
+            if (event.ctrlKey && event.key === 'k') {
+                event.preventDefault();
+                clearInput();
+            }
+            
+            // F5 para refrescar tablas
+            if (event.key === 'F5') {
+                event.preventDefault();
+                loadTables();
+                logToConsole('🔄 Lista de tablas actualizada', 'info');
+            }
+        });
+
+        // Mostrar atajos de teclado en consola
+        setTimeout(() => {
+            logToConsole('💡 Atajos: Ctrl+Enter (ejecutar), Ctrl+K (limpiar), F5 (refrescar)', 'info');
+        }, 2000);
+    </script>
+</body>
+</html>

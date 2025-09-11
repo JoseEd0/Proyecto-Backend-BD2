@@ -1,0 +1,17 @@
+# Dependencias para la API FastAPI del Parser SQL
+# Proyecto CS2702 - Base de Datos 2 UTEC
+
+# Framework web principal
+fastapi==0.104.1
+
+# Servidor ASGI
+uvicorn[standard]==0.24.0
+
+# Modelos de datos y validación
+pydantic==2.5.0
+
+# CORS middleware (ya incluido en FastAPI pero por claridad)
+python-multipart==0.0.6
+
+# Para desarrollo y debugging (opcional)
+python-dotenv==1.0.0
