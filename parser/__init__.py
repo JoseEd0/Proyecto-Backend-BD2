@@ -6,7 +6,7 @@ Este módulo proporciona un parser SQL completo que incluye:
 - Análisis léxico y sintáctico
 - Validación semántica
 - Traducción a operaciones del gestor
-- Soporte para múltiples técnicas de indexación
+- Soporte para múltiples técnicas de indexación y tipos de datos
 """
 
 from .lexer import SQLLexer, Token, TokenType, tokenize
