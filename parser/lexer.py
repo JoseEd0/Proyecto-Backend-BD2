@@ -4,7 +4,7 @@ Proyecto CS2702 - Base de Datos 2 UTEC
 """
 
 import re
-from enum import Enum
+from enum import Enum, auto
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -13,22 +13,30 @@ class TokenType(Enum):
     """Tipos de tokens reconocidos por el lexer"""
 
     # Palabras clave
-    CREATE = "CREATE"
-    TABLE = "TABLE"
-    FROM = "FROM"
-    FILE = "FILE"
-    USING = "USING"
-    INDEX = "INDEX"
-    SELECT = "SELECT"
-    INSERT = "INSERT"
-    INTO = "INTO"
-    DELETE = "DELETE"
-    WHERE = "WHERE"
-    VALUES = "VALUES"
-    BETWEEN = "BETWEEN"
-    AND = "AND"
-    IN = "IN"
-    KEY = "KEY"
+    SELECT = auto()
+    FROM = auto()
+    WHERE = auto()
+    CREATE = auto()
+    DROP = auto()
+    TABLE = auto()
+    INDEX = auto()
+    INSERT = auto()
+    DELETE = auto()
+    INTO = auto()
+    VALUES = auto()
+    PRIMARY = auto()
+    KEY = auto()
+    USING = auto()
+    FILE = auto()
+    BOOLEAN = auto()
+    ON = auto()
+    TRUE = auto()
+    FALSE = auto()
+    BETWEEN = auto()
+    IN = auto()
+    AND = auto()
+    OR = auto()
+    NOT = auto()
 
     # Tipos de datos
     INT = "INT"
@@ -75,9 +83,11 @@ class Token:
     column: int = 1
 
 
+
 class SQLLexer:
     """Analizador léxico para consultas SQL del mini gestor"""
 
+    # Palabras clave (todas en MAYÚSCULAS para matching case-insensitive)
     KEYWORDS = {
         "CREATE": TokenType.CREATE,
         "TABLE": TokenType.TABLE,
@@ -101,10 +111,26 @@ class SQLLexer:
         "ARRAY": TokenType.ARRAY,
         "FLOAT": TokenType.FLOAT,
         "SEQ": TokenType.SEQ,
-        "BTree": TokenType.BTREE,
+        "BTREE": TokenType.BTREE,
         "ISAM": TokenType.ISAM,
-        "Hash": TokenType.HASH,
-        "RTree": TokenType.RTREE,
+        "HASH": TokenType.HASH,
+        "RTREE": TokenType.RTREE,
+        "TRUE": TokenType.TRUE,
+        "FALSE": TokenType.FALSE,
+        "BOOLEAN": TokenType.BOOLEAN,
+        "DROP": TokenType.DROP,
+        "PRIMARY": TokenType.PRIMARY,
+        "ON": TokenType.ON,
+        "OR": TokenType.OR,
+        "NOT": TokenType.NOT,
+    }
+
+    # Valores canónicos para normalizar el .value de los tokens
+    CANONICAL_CASE = {
+        "BTREE": "BTree",
+        "HASH": "Hash",
+        "RTREE": "RTree",
+        # El resto se mantiene en mayúsculas (INT, VARCHAR, SEQ, etc.)
     }
 
     def __init__(self):
@@ -143,6 +169,15 @@ class SQLLexer:
         tokens = []
 
         while self.pos < len(self.text):
+            # Verificar comentarios PRIMERO (antes de espacios)
+            if (
+                self.pos < len(self.text) - 1
+                and self.text[self.pos : self.pos + 2] == "--"
+            ):
+                self._skip_whitespace()
+                continue
+
+            # Luego verificar espacios
             if self._current_char().isspace():
                 self._skip_whitespace()
                 continue
@@ -171,9 +206,25 @@ class SQLLexer:
             self.pos += 1
 
     def _skip_whitespace(self):
-        """Salta espacios en blanco"""
-        while self.pos < len(self.text) and self._current_char().isspace():
-            self._advance()
+        """Salta espacios en blanco y comentarios"""
+        while self.pos < len(self.text):
+            # Saltar espacios
+            if self._current_char().isspace():
+                self._advance()
+            # Saltar comentarios de línea (-- hasta fin de línea)
+            elif (
+                self.pos < len(self.text) - 1
+                and self.text[self.pos : self.pos + 2] == "--"
+            ):
+                # Avanzar hasta el final de la línea
+                while self.pos < len(self.text) and self.text[self.pos] != "\n":
+                    self._advance()
+                # Saltar el salto de línea también
+                if self.pos < len(self.text) and self.text[self.pos] == "\n":
+                    self._advance()
+            else:
+                break
+
 
     def _next_token(self) -> Optional[Token]:
         """Obtiene el siguiente token"""
@@ -190,11 +241,13 @@ class SQLLexer:
                 for _ in range(len(value)):
                     self._advance()
 
-                # Verificar si es palabra clave
+                # Verificar si es palabra clave (case-insensitive)
                 if token_type == TokenType.IDENTIFIER:
                     upper_value = value.upper()
                     if upper_value in self.KEYWORDS:
                         token_type = self.KEYWORDS[upper_value]
+                        # Normalizar el 'value' a la forma canónica esperada por los Enums
+                        value = self.CANONICAL_CASE.get(upper_value, upper_value)
 
                 # Procesar strings
                 if token_type == TokenType.STRING:
@@ -202,6 +255,10 @@ class SQLLexer:
 
                 return Token(token_type, value, start_line, start_column)
 
+        # Si no coincide con ningún patrón, error
+        raise Exception(
+            f"Carácter inesperado '{self._current_char()}' en línea {self.line}, columna {self.column}"
+        )
         # Si no coincide con ningún patrón, error
         raise Exception(
             f"Carácter inesperado '{self._current_char()}' en línea {self.line}, columna {self.column}"
