@@ -1,0 +1,15 @@
+# Framework web y servidor
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+
+# Estructuras de datos espaciales
+rtree>=1.0.0
+
+# Librería estándar Python (no requiere instalación)
+# - struct: Serialización binaria
+# - csv: Lectura/escritura CSV
+# - os: Manejo de archivos y directorios
+# - math: Operaciones matemáticas
