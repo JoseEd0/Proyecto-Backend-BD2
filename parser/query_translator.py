@@ -78,14 +78,12 @@ class QueryTranslator:
         }
 
         try:
-            # Validación semántica si se solicita
             if validate:
                 errors = self.validator.validate_query(query)
                 if errors:
                     result["errors"] = errors
                     return result
 
-            # Ejecutar según el tipo de consulta
             if isinstance(query, CreateTableQuery):
                 result["result"] = self._execute_create_table(query)
                 result["operation"] = "CREATE_TABLE"
@@ -112,54 +110,144 @@ class QueryTranslator:
     def _execute_create_table(self, query: CreateTableQuery) -> Any:
         """Ejecuta CREATE TABLE"""
         success = self.db_adapter.create_table(query.table_name, query.columns)
-        
-        # Registrar esquema en el validador
+
         schema = TableSchema(query.table_name, query.columns)
         self.validator.register_table(schema)
-        
+
         return f"Tabla '{query.table_name}' creada exitosamente"
 
+
     def _execute_create_table_from_file(self, query: CreateTableFromFileQuery) -> Any:
-        """Ejecuta CREATE TABLE FROM FILE"""
+        """Ejecuta CREATE TABLE FROM FILE y registra el esquema para futuras validaciones"""
         success = self.db_adapter.create_table_from_file(
-            query.table_name, 
-            query.file_path, 
-            query.index_column, 
+            query.table_name,
+            query.file_path,
+            query.index_column,
             query.index_type
         )
+
+        # Intentar recuperar el esquema desde el adaptador y registrarlo en el validador
+        try:
+            if hasattr(self.db_adapter, "get_table_info"):
+                info = self.db_adapter.get_table_info(query.table_name)
+                if info and isinstance(info, dict) and "columns" in info:
+                    cols = []
+                    valid_dt = {d.value: d for d in DataType}
+                    valid_ix = {i.value: i for i in IndexType}
+                    for c in info["columns"]:
+                        name = c.get("name")
+                        tval = c.get("type")
+                        dt = valid_dt.get(tval, DataType.VARCHAR)
+                        size = c.get("size", None)
+                        is_key = bool(c.get("is_key", False))
+                        ixval = c.get("index", c.get("index_type"))
+                        ix = valid_ix.get(ixval) if ixval else None
+                        cols.append(Column(name=name, data_type=dt, size=size, is_key=is_key, index_type=ix))
+                    self.validator.register_table(TableSchema(query.table_name, cols))
+        except Exception:
+            # Si algo falla, no hacemos crash; el adaptador seguirá funcionando
+            pass
+
         return f"Tabla '{query.table_name}' creada desde archivo '{query.file_path}'"
 
     def _execute_select(self, query: SelectQuery) -> Any:
         """Ejecuta SELECT"""
-        if query.condition is None:
-            # SELECT sin WHERE - scan completo
+        cond = query.condition
+
+        # Sin WHERE → scan completo
+        if cond is None:
             return self.db_adapter.scan_all(query.table_name)
-        
-        condition = query.condition
-        
-        if condition.operator == "=":
-            return self.db_adapter.search(query.table_name, condition.column, condition.value)
-        elif condition.operator == "BETWEEN":
-            return self.db_adapter.range_search(query.table_name, condition.column, condition.value, condition.value2)
-        elif condition.operator == "IN" and isinstance(condition.value, list) and len(condition.value) == 2:
-            # Consulta espacial
-            point, radius = condition.value
-            return self.db_adapter.spatial_range_search(query.table_name, condition.column, point, radius)
-        elif condition.operator in ["<", ">", "<=", ">="]:
-            # Para simplificar, tratamos como búsqueda exacta
-            return self.db_adapter.search(query.table_name, condition.column, condition.value)
+
+        # 1) Condición compuesta: filtrar en memoria (fallback general)
+        if hasattr(cond, "logical_op") and cond.logical_op:
+            rows = self.db_adapter.scan_all(query.table_name)
+            return [r for r in rows if self._eval_condition(r, cond)]
+
+        # 2) Detectar patrón espacial: IN ([x,y,...], radio)
+        if cond.operator == "IN":
+            v = cond.value
+            is_spatial = (
+                    isinstance(v, list)
+                    and len(v) == 2
+                    and isinstance(v[0], list)  # el punto [x,y]...
+                    and isinstance(v[1], (int, float))  # ...y el radio
+            )
+            if is_spatial:
+                point, radius = v[0], float(v[1])
+                return self.db_adapter.spatial_range_search(
+                    query.table_name, cond.column, point, radius
+                )
+
+            # IN genérico (lista de valores) → scan + filtro
+            rows = self.db_adapter.scan_all(query.table_name)
+            return [r for r in rows if self._eval_condition(r, cond)]
+
+        # 3) Operadores simples
+        if cond.operator == "=":
+            return self.db_adapter.search(query.table_name, cond.column, cond.value)
+        elif cond.operator == "BETWEEN":
+            return self.db_adapter.range_search(
+                query.table_name, cond.column, cond.value, cond.value2
+            )
+        elif cond.operator in ["<", ">", "<=", ">="]:
+            rows = self.db_adapter.scan_all(query.table_name)
+            return [r for r in rows if self._eval_condition(r, cond)]
         else:
-            return [{"error": f"Operador {condition.operator} no soportado"}]
+            return [{"error": f"Operador {cond.operator} no soportado"}]
+
+    def _eval_condition(self, row: Dict[str, Any], cond: Condition) -> bool:
+        if cond.logical_op:
+            l = self._eval_condition(row, cond.left) if cond.left else False
+            r = self._eval_condition(row, cond.right) if cond.right else False
+            return (l and r) if cond.logical_op == "AND" else (l or r)
+
+        col = cond.column
+        v = row.get(col) if isinstance(row, dict) else None
+        op = cond.operator
+
+        if op == "=":
+            return v == cond.value
+        if op == "<":
+            return v is not None and v < cond.value
+        if op == ">":
+            return v is not None and v > cond.value
+        if op == "<=":
+            return v is not None and v <= cond.value
+        if op == ">=":
+            return v is not None and v >= cond.value
+        if op == "BETWEEN":
+            return v is not None and cond.value <= v <= cond.value2
+        if op == "IN":
+            if isinstance(cond.value, list) and len(cond.value) == 2 and isinstance(cond.value[0], list):
+                point, radius = cond.value
+                try:
+                    if not (isinstance(v, list) and len(v) >= 2):
+                        return False
+                    cx, cy = float(point[0]), float(point[1])
+                    px, py = float(v[0]), float(v[1])
+                    dx, dy = px - cx, py - cy
+                    import math
+                    return math.hypot(dx, dy) <= float(radius)
+                except Exception:
+                    return False
+            if isinstance(cond.value, list):
+                return v in cond.value
+            return False
+        return False
 
     def _execute_insert(self, query: InsertQuery) -> Any:
         """Ejecuta INSERT"""
         success = self.db_adapter.add(query.table_name, query.values)
+        if not success:
+            raise Exception(f"No se pudo insertar el registro en '{query.table_name}' (posible duplicado)")
         return f"Registro insertado en '{query.table_name}'"
 
     def _execute_delete(self, query: DeleteQuery) -> Any:
         """Ejecuta DELETE"""
         condition = query.condition
         success = self.db_adapter.remove(query.table_name, condition.column, condition.value)
+        if not success:
+            raise Exception(f"No se pudo eliminar el registro de '{query.table_name}'")
         return f"Registro eliminado de '{query.table_name}'"
 
     def get_table_info(self, table_name: str) -> Optional[Dict[str, Any]]:

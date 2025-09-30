@@ -49,15 +49,13 @@ class SemanticValidator:
     def _validate_create_table(self, query: CreateTableQuery) -> List[str]:
         """Valida CREATE TABLE"""
         errors = []
-        
-        # Verificar que existe exactamente una columna KEY
+
         key_columns = [col for col in query.columns if col.is_key]
         if len(key_columns) == 0:
             errors.append("La tabla debe tener exactamente una columna marcada como KEY")
         elif len(key_columns) > 1:
             errors.append("La tabla no puede tener más de una columna KEY")
 
-        # Validar compatibilidad de tipos de índice con tipos de datos
         for col in query.columns:
             if col.index_type:
                 if col.data_type == DataType.ARRAY_FLOAT and col.index_type != IndexType.RTREE:
@@ -70,21 +68,18 @@ class SemanticValidator:
     def _validate_select(self, query: SelectQuery) -> List[str]:
         """Valida SELECT"""
         errors = []
-        
-        # Verificar que la tabla existe
+
         if query.table_name not in self.tables:
             errors.append(f"La tabla '{query.table_name}' no existe")
             return errors
 
         schema = self.tables[query.table_name]
-        
-        # Verificar columnas (excepto *)
+
         if not query.is_select_all():
             for col_name in query.columns:
                 if not schema.has_column(col_name):
                     errors.append(f"La columna '{col_name}' no existe en la tabla '{query.table_name}'")
 
-        # Validar condición WHERE
         if query.condition:
             errors.extend(self._validate_condition(query.condition, schema))
 
@@ -93,14 +88,13 @@ class SemanticValidator:
     def _validate_insert(self, query: InsertQuery) -> List[str]:
         """Valida INSERT"""
         errors = []
-        
+
         if query.table_name not in self.tables:
             errors.append(f"La tabla '{query.table_name}' no existe")
             return errors
 
         schema = self.tables[query.table_name]
-        
-        # Verificar que el número de valores coincide con el número de columnas
+
         if len(query.values) != len(schema.columns):
             errors.append(f"Se esperaban {len(schema.columns)} valores, se proporcionaron {len(query.values)}")
 
@@ -109,7 +103,7 @@ class SemanticValidator:
     def _validate_delete(self, query: DeleteQuery) -> List[str]:
         """Valida DELETE"""
         errors = []
-        
+
         if query.table_name not in self.tables:
             errors.append(f"La tabla '{query.table_name}' no existe")
             return errors
@@ -120,24 +114,34 @@ class SemanticValidator:
         return errors
 
     def _validate_condition(self, condition: Condition, schema: TableSchema) -> List[str]:
-        """Valida una condición WHERE"""
+        """Valida una condición WHERE (simple o compuesta)"""
         errors = []
-        
-        # Verificar que la columna existe
+
+        if hasattr(condition, "logical_op") and condition.logical_op:
+            if condition.logical_op not in ("AND", "OR"):
+                errors.append(f"Operador lógico '{condition.logical_op}' no soportado")
+                return errors
+
+            if condition.left is None or condition.right is None:
+                errors.append("Condición compuesta inválida: falta lado izquierdo o derecho")
+                return errors
+
+            errors.extend(self._validate_condition(condition.left, schema))
+            errors.extend(self._validate_condition(condition.right, schema))
+            return errors
+
         if not schema.has_column(condition.column):
             errors.append(f"La columna '{condition.column}' no existe")
             return errors
 
         column = schema.get_column(condition.column)
-        
-        # Validar consultas espaciales
-        if condition.operator == "IN" and isinstance(condition.value, list) and len(condition.value) == 2:
-            # Es una consulta espacial
-            if column.data_type != DataType.ARRAY_FLOAT:
-                errors.append(f"Las consultas espaciales solo pueden usarse en columnas ARRAY[FLOAT]")
 
-        # Validar BETWEEN con índices HASH
+        if condition.operator == "IN" and isinstance(condition.value, list) and len(condition.value) == 2:
+            if column.data_type != DataType.ARRAY_FLOAT:
+                errors.append("Las consultas espaciales solo pueden usarse en columnas ARRAY[FLOAT]")
+
         if condition.operator == "BETWEEN" and column.index_type == IndexType.HASH:
-            errors.append(f"Los índices HASH no soportan búsquedas por rango (BETWEEN)")
+            errors.append("Los índices HASH no soportan búsquedas por rango (BETWEEN)")
 
         return errors
+
