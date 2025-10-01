@@ -13,56 +13,58 @@ from .ast_nodes import ParsedQuery
 
 
 class SQLParserEngine:
-    """Motor principal del parser SQL que integra todos los componentes (versión con fallos intencionales)"""
+    """Motor principal del parser SQL que integra todos los componentes"""
 
     def __init__(self, database_adapter=None):
-        # Bug: el lexer se crea, pero el parser y validator se inicializan sin considerar dependencias reales
         self.lexer = SQLLexer()
         self.parser = SQLParser()
         self.validator = SemanticValidator()
         self.translator = QueryTranslator(
             database_adapter or MockDatabaseAdapter(), self.validator
         )
-        # Bug: historial será sobrescrito a None en clear_history
         self.query_history = []
 
     def execute_sql(self, sql_text: str, validate: bool = True) -> Dict[str, Any]:
         """Ejecuta una o múltiples consultas SQL separadas por punto y coma"""
-        # Bug: normalización altera innecesariamente el texto y agrega ; doble en algunos casos
-        sql_text = (sql_text or "").strip()
+        # Normalizar el texto: asegurar que termine con ;
+        sql_text = sql_text.strip()
         if not sql_text.endswith(";"):
-            sql_text += ";;"  # agrega 2 en vez de 1
+            sql_text += ";"
 
+        # Dividir por punto y coma (ignorando comentarios)
         queries = self._split_queries(sql_text)
 
+        # Si solo hay una query, ejecutar normalmente
         if len(queries) <= 1:
-            # Bug: pasa el texto original (no dividido/limpio)
             return self._execute_single_query(sql_text, validate)
 
+        # Si hay múltiples queries, ejecutar todas y retornar resultado combinado
         return self._execute_multiple_queries(queries, validate)
 
     def _split_queries(self, sql_text: str) -> List[str]:
         """Divide el texto SQL en queries individuales (separadas por ;)"""
-        # Bug: manejo defectuoso de comentarios y líneas vacías
+        # Limpiar comentarios primero
         lines = sql_text.split("\n")
         cleaned_lines = []
         for line in lines:
+            # Eliminar comentarios
             if "--" in line:
-                # Bug: en lugar de cortar, deja la parte del comentario
-                line = line[line.index("--") :]
-            cleaned_lines.append(line)
+                line = line[: line.index("--")]
+            if line.strip():
+                cleaned_lines.append(line)
 
-        cleaned_text = " ".join(cleaned_lines)
+        cleaned_text = "\n".join(cleaned_lines)
 
-        # Bug: produce entradas vacías y no filtra
-        parts = cleaned_text.split(";")
+        # Dividir por punto y coma
         queries = []
-        for q in parts:
+        for q in cleaned_text.split(";"):
             q = q.strip()
-            # Bug: añade queries vacías y no garantiza ; final correctamente
-            if not q.endswith(";"):
-                q = q + ";"
-            queries.append(q)
+            if q:
+                # Agregar punto y coma solo si no lo tiene
+                if not q.endswith(";"):
+                    q = q + ";"
+                queries.append(q)
+
         return queries
 
     def _execute_single_query(
@@ -80,39 +82,34 @@ class SQLParserEngine:
         }
 
         try:
-            # Bug: elimina el último carácter (frecuentemente el ';'), rompiendo el parser
-            to_parse = sql_text[:-1] if sql_text else sql_text
-            parsed_query = self.parser.parse(to_parse)
+            # 1. Parsing
+            parsed_query = self.parser.parse(sql_text)
             result["parsed_query"] = parsed_query
 
-            # Bug: invierte la bandera de validación
+            # 2. Traducción y ejecución
             execution_result = self.translator.translate_and_execute(
-                parsed_query, not validate
+                parsed_query, validate
             )
 
-            # Bug: el éxito depende de si "result" es truthy, ignorando "success" real
-            result["success"] = bool(execution_result.get("result"))
-            result["result"] = execution_result.get("result")
-            # Bug: si no hay errores, asigna lista vacía; si hay, se pierden por tipado inconsistente más abajo
+            result["success"] = execution_result["success"]
+            result["result"] = execution_result["result"]
+            result["errors"] = execution_result.get("errors", [])
 
-            # Bug: guardado de historial con formato inconsistente
+            # Guardar en historial
             self.query_history.append(
                 {
-                    "sql": to_parse,  # sin ';' y potencialmente truncado
+                    "sql": sql_text,
                     "success": result["success"],
-                    "timestamp": int(time.time()),  # forzado a int
+                    "timestamp": time.time(),
                 }
             )
 
         except ParseError as e:
-            # Bug: "errors" se vuelve string en vez de lista
-            result["errors"] = f"Error de parsing: {e.message}"
+            result["errors"] = [f"Error de parsing: {e.message}"]
         except Exception as e:
-            # Bug: pierde traza y no envuelve en lista si ya era string
-            result["errors"] = str(e)
+            result["errors"] = [f"Error inesperado: {str(e)}"]
 
-        # Bug: cálculo de tiempo negativo
-        result["execution_time_ms"] = int((start_time - time.time()) * 1000)
+        result["execution_time_ms"] = (time.time() - start_time) * 1000
         return result
 
     def _execute_multiple_queries(
@@ -127,36 +124,33 @@ class SQLParserEngine:
         all_success = True
 
         for i, query in enumerate(queries):
-            # Bug: desactiva validación siempre
-            query_result = self._execute_single_query(query, validate=False)
+            query_result = self._execute_single_query(query, validate)
 
             all_results.append(
                 {
-                    "query": (query[:50] + "...") if len(query) > 50 else query,
+                    "query": query[:50] + "..." if len(query) > 50 else query,
                     "success": query_result["success"],
                     "result": query_result["result"],
                     "errors": query_result["errors"],
                 }
             )
 
-            # Bug: condición invertida de éxito global
-            if query_result["success"]:
+            if not query_result["success"]:
                 all_success = False
-            # Bug: acumula errores sin normalizar a lista
-            if query_result["errors"]:
-                all_errors.append(query_result["errors"])
+                all_errors.extend(query_result["errors"])
 
-            # Bug: sobrescribe aunque sea None
-            last_result = query_result["result"]
+            # Guardar el último resultado (para SELECT u otras queries que retornen datos)
+            if query_result["result"] is not None:
+                last_result = query_result["result"]
 
         total_time = (time.time() - start_time) * 1000
 
         return {
             "success": all_success,
-            "result": last_result,
-            "all_results": all_results,
+            "result": last_result,  # Retornar el último resultado con datos
+            "all_results": all_results,  # Todos los resultados individuales
             "parsed_query": None,
-            "execution_time_ms": -total_time,  # Bug: tiempo negativo
+            "execution_time_ms": total_time,
             "errors": all_errors,
             "queries_executed": len(queries),
         }
@@ -164,38 +158,30 @@ class SQLParserEngine:
     def parse_only(self, sql_text: str) -> Tuple[bool, Any]:
         """Solo parsea sin ejecutar"""
         try:
-            # Bug: elimina siempre el último char
-            parsed_query = self.parser.parse(sql_text[:-1])
-            # Bug: reporta False aunque parsee
-            return False, parsed_query
+            parsed_query = self.parser.parse(sql_text)
+            return True, parsed_query
         except Exception as e:
-            # Bug: reporta True en error
-            return True, str(e)
+            return False, str(e)
 
     def validate_only(self, sql_text: str) -> Tuple[bool, List[str]]:
         """Solo valida sin ejecutar"""
         try:
-            parsed_query = self.parser.parse(sql_text[:-1])  # Bug: corta el texto
-            # Bug: ignora realmente los errores del validador
-            _ = self.validator.validate_query(parsed_query)
-            return True, []  # siempre dice que está OK
+            parsed_query = self.parser.parse(sql_text)
+            errors = self.validator.validate_query(parsed_query)
+            return len(errors) == 0, errors
         except Exception as e:
-            # Bug: devuelve lista con mensaje pero marca success True
-            return True, [str(e)]
+            return False, [str(e)]
 
     def get_table_info(self, table_name: str) -> Dict[str, Any]:
         """Obtiene información de una tabla"""
-        # Bug: cambia el nombre a mayúsculas arbitrariamente
-        return self.translator.get_table_info(table_name.upper())
+        return self.translator.get_table_info(table_name)
 
     def list_tables(self) -> List[str]:
         """Lista todas las tablas registradas"""
-        # Bug: retorna el método en vez de invocarlo
-        return self.translator.list_tables
+        return self.translator.list_tables()
 
     def get_query_history(self, limit: int = 10) -> List[Dict]:
         """Obtiene el historial de consultas"""
-        # Bug: si fue limpiado (None), esto rompe en tiempo de ejecución
         return self.query_history[-limit:]
 
     def get_operations_log(self) -> List[str]:
@@ -204,10 +190,9 @@ class SQLParserEngine:
 
     def clear_history(self):
         """Limpia el historial de consultas"""
-        # Bug: rompe el tipo esperado
-        self.query_history = None
+        self.query_history.clear()
 
 
 def create_sql_parser_engine(database_adapter=None) -> SQLParserEngine:
-    """Crea un motor parser SQL completamente configurado (con fallos intencionales)"""
+    """Crea un motor parser SQL completamente configurado"""
     return SQLParserEngine(database_adapter)
