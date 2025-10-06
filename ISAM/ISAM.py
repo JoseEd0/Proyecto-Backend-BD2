@@ -1,364 +1,316 @@
+import json
 import os
-import struct
-
-BLOCK_FACTOR = 3
-LEAF_BLOCK_FACTOR = 3
-ROOT_BLOCK_FACTOR = 3
-
-class Record:
-    FORMAT = 'i20s10sf'
-    SIZE_OF_RECORD = struct.calcsize(FORMAT)
-
-    def __init__(self, id_: int, nombre: str, fecha: str, rating: float):
-        self.id = id_
-        self.nombre = nombre
-        self.fecha = fecha
-        self.rating = float(rating)
-
-    def pack(self) -> bytes:
-        return struct.pack(
-            self.FORMAT,
-            self.id,
-            self.nombre[:20].ljust(20).encode(),
-            self.fecha[:10].ljust(10).encode(),
-            self.rating
-        )
-
-    @staticmethod
-    def unpack(data: bytes):
-        id_, nbytes, fbytes, rating = struct.unpack(Record.FORMAT, data)
-        nombre = nbytes.decode().rstrip('\x00').rstrip()
-        fecha = fbytes.decode().rstrip('\x00').rstrip()
-        return Record(id_, nombre, fecha, rating)
-
-    def __repr__(self):
-        return f"Record(id={self.id}, nombre='{self.nombre}', fecha='{self.fecha}', rating={self.rating:.1f})"
+from bisect import bisect_right
+from typing import Any, Dict, List, Tuple, Optional
 
 
-class DataPage:
-    HEADER_FORMAT = 'ii'
-    HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-    SIZE_OF_PAGE = HEADER_SIZE + BLOCK_FACTOR * Record.SIZE_OF_RECORD
+class ISAMIndex:
+    """
+    ISAM (3 niveles) con:
+      - Área primaria en buckets ordenados por key (tamaño fijo: block_factor)
+      - Directorio de 3 niveles: leaf (mínimos por bucket), root (agrupa leaves), super_root (agrupa roots)
+      - Área de overflow por bucket (ordenado por key)
+      - Heap file (JSONL) para almacenar el payload completo de cada fila (puntero = offset en bytes)
 
-    def __init__(self, records=None, next_page=-1):
-        self.records = list(records) if records else []
-        self.next_page = next_page
+    Métodos:
+      add(key:int, row:dict) -> bool
+      search(key:int) -> List[dict]
+      range_search(begin:int, end:int) -> List[dict]
+      remove(key:int) -> int
+      get_all() -> List[dict]
+      clear() -> None
+    """
 
-    def has_space(self):
-        return len(self.records) < BLOCK_FACTOR
+    def __init__(self, file_path: str, block_factor: int = 4, root_factor: int = 8, super_factor: int = 8):
+        self.file_path = file_path                   # base path sin extensión
+        self.index_path = f"{file_path}.index.json"  # índice (directorios + buckets sin payload)
+        self.heap_path = f"{file_path}.heap"         # heap con registros JSONL (binario)
+        self.block_factor = int(block_factor)
+        self.root_factor = int(root_factor)
+        self.super_factor = int(super_factor)
 
-    def pack(self) -> bytes:
-        header_data = struct.pack(self.HEADER_FORMAT, len(self.records), self.next_page)
-        records_data = b''.join(r.pack() for r in self.records)
-        pad = BLOCK_FACTOR - len(self.records)
-        if pad > 0:
-            records_data += b'\x00' * (pad * Record.SIZE_OF_RECORD)
-        return header_data + records_data
+        # Estructuras en memoria
+        self.leaves: List[List[Tuple[int, int]]] = []   # lista de buckets; cada entrada: (key, offset_en_heap)
+        self.dir_keys: List[int] = []                   # mínimas por bucket
+        self.overflow: Dict[int, List[Tuple[int, int]]] = {}  # bi -> lista (key, offset)
 
-    @staticmethod
-    def unpack(data: bytes):
-        size, next_page = struct.unpack(DataPage.HEADER_FORMAT, data[:DataPage.HEADER_SIZE])
-        records = []
-        offset = DataPage.HEADER_SIZE
-        for _ in range(size):
-            chunk = data[offset: offset + Record.SIZE_OF_RECORD]
-            records.append(Record.unpack(chunk))
-            offset += Record.SIZE_OF_RECORD
-        return DataPage(records, next_page)
+        # índices superiores (3 niveles)
+        self.root: List[Tuple[int, int]] = []        # (max_key del grupo de leaves, start_leaf_index)
+        self.super_root: List[Tuple[int, int]] = []  # (max_key del grupo de roots, start_root_index)
 
+        self._load_if_exists()
 
-class ISAMFile:
-    INDEX_ENTRY_FMT = 'ii'
-    INDEX_ENTRY_SIZE = struct.calcsize(INDEX_ENTRY_FMT)
+    # ------------------ Persistencia índice ------------------
 
-    def __init__(self, filename):
-        self.filename = filename
-        self.filename_idx = filename + '_idx'
-        self.leaf = []
+    def _load_if_exists(self):
+        if os.path.exists(self.index_path):
+            try:
+                with open(self.index_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.block_factor = int(data.get("block_factor", self.block_factor))
+                self.root_factor = int(data.get("root_factor", self.root_factor))
+                self.super_factor = int(data.get("super_factor", self.super_factor))
+                self.leaves = [ [ (int(k), int(off)) for k, off in bucket ] for bucket in data.get("leaves", []) ]
+                self.dir_keys = [ int(x) for x in data.get("dir_keys", []) ]
+                self.overflow = { int(bi): [ (int(k), int(off)) for k, off in lst ]
+                                  for bi, lst in data.get("overflow", {}).items() }
+                self.root = [ (int(mx), int(start)) for mx, start in data.get("root", []) ]
+                self.super_root = [ (int(mx), int(start)) for mx, start in data.get("super_root", []) ]
+            except Exception:
+                self._init_empty()
+        else:
+            self._init_empty()
+
+    def _init_empty(self):
+        self.leaves = [[]]          # al menos 1 bucket vacío
+        self.dir_keys = []          # sin mínimas al inicio
+        self.overflow = {}
         self.root = []
         self.super_root = []
-        self.primary_page_count = 0
+        self._save()
 
-    @staticmethod
-    def _first_ge_index(keys, key):
-        for i, v in enumerate(keys):
-            if v >= key:
-                return i
-        return len(keys)
+    def _save(self):
+        os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
+        data = {
+            "block_factor": self.block_factor,
+            "root_factor": self.root_factor,
+            "super_factor": self.super_factor,
+            "leaves": self.leaves,
+            "dir_keys": self.dir_keys,
+            "overflow": { str(bi): lst for bi, lst in self.overflow.items() },
+            "root": self.root,
+            "super_root": self.super_root,
+        }
+        with open(self.index_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
 
-    def _file_size(self):
-        return os.path.getsize(self.filename) if os.path.exists(self.filename) else 0
+    # ------------------ Heap (payload) ------------------
 
-    def _total_pages(self):
-        return self._file_size() // DataPage.SIZE_OF_PAGE
+    def _heap_append(self, row: Dict) -> int:
+        """Escribe una fila en el heap (JSONL binario). Retorna offset en bytes."""
+        os.makedirs(os.path.dirname(self.heap_path), exist_ok=True)
+        b = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+        with open(self.heap_path, "ab") as f:
+            pos = f.tell()
+            f.write(b)
+            return pos
 
-    def _read_page(self, f, page_no) -> DataPage:
-        f.seek(page_no * DataPage.SIZE_OF_PAGE)
-        data = f.read(DataPage.SIZE_OF_PAGE)
-        return DataPage.unpack(data)
-
-    def _write_page(self, f, page_no, page: DataPage):
-        f.seek(page_no * DataPage.SIZE_OF_PAGE)
-        f.write(page.pack())
-
-    def _append_page(self, f, page: DataPage) -> int:
-        f.seek(0, os.SEEK_END)
-        pos = f.tell()
-        f.write(page.pack())
-        return pos // DataPage.SIZE_OF_PAGE
-
-    def _save_index(self):
-        with open(self.filename_idx, 'wb') as f:
-            f.write(struct.pack('i', len(self.leaf)))
-            for mx, pno in self.leaf:
-                f.write(struct.pack(self.INDEX_ENTRY_FMT, mx, pno))
-            f.write(struct.pack('i', len(self.root)))
-            for mx, start in self.root:
-                f.write(struct.pack(self.INDEX_ENTRY_FMT, mx, start))
-            f.write(struct.pack('i', len(self.super_root)))
-            for mx, start in self.super_root:
-                f.write(struct.pack(self.INDEX_ENTRY_FMT, mx, start))
-
-    def _load_index(self):
-        self.leaf, self.root, self.super_root = [], [], []
-        if not os.path.exists(self.filename_idx):
-            self.primary_page_count = 0
-            return
-        with open(self.filename_idx, 'rb') as f:
-            b = f.read(4)
-            if not b:
-                self.primary_page_count = 0
-                return
-            n_leaf = struct.unpack('i', b)[0]
-            for _ in range(n_leaf):
-                mx, pno = struct.unpack(self.INDEX_ENTRY_FMT, f.read(self.INDEX_ENTRY_SIZE))
-                self.leaf.append((mx, pno))
-            n_root_b = f.read(4)
-            if not n_root_b:
-                self.primary_page_count = len(self.leaf)
-                return
-            n_root = struct.unpack('i', n_root_b)[0]
-            for _ in range(n_root):
-                mx, start = struct.unpack(self.INDEX_ENTRY_FMT, f.read(self.INDEX_ENTRY_SIZE))
-                self.root.append((mx, start))
-            n_sroot_b = f.read(4)
-            if n_sroot_b:
-                n_sroot = struct.unpack('i', n_sroot_b)[0]
-                for _ in range(n_sroot):
-                    mx, start = struct.unpack(self.INDEX_ENTRY_FMT, f.read(self.INDEX_ENTRY_SIZE))
-                    self.super_root.append((mx, start))
-        self.primary_page_count = len(self.leaf)
-
-    def build_index(self):
-        self.leaf, self.root, self.super_root = [], [], []
-        if not os.path.exists(self.filename):
-            self._save_index()
-            return
-        total = self._total_pages()
-        with open(self.filename, 'rb') as f:
-            for i in range(total):
-                page = self._read_page(f, i)
-                if len(page.records) == 0:
-                    break
-                max_key = max(r.id for r in page.records)
-                self.leaf.append((max_key, i))
-        self.primary_page_count = len(self.leaf)
-        for i in range(0, len(self.leaf), LEAF_BLOCK_FACTOR):
-            bloque = self.leaf[i:i + LEAF_BLOCK_FACTOR]
-            max_key = bloque[-1][0]
-            self.root.append((max_key, i))
-        for i in range(0, len(self.root), ROOT_BLOCK_FACTOR):
-            bloque = self.root[i:i + ROOT_BLOCK_FACTOR]
-            max_key = bloque[-1][0]
-            self.super_root.append((max_key, i))
-        self._save_index()
-
-    def _super_find_block(self, key):
-        if not self.super_root:
+    def _heap_read_at(self, offset: int) -> Optional[Dict]:
+        """Lee una fila desde el heap usando el offset. Retorna dict o None si falla."""
+        if not os.path.exists(self.heap_path):
             return None
-        keys = [mx for mx, _ in self.super_root]
-        i = self._first_ge_index(keys, key)
-        return self.super_root[i][1] if i < len(self.super_root) else None
-
-    def _root_find_block(self, start_idx_root, key):
-        sub = self.root[start_idx_root:start_idx_root + ROOT_BLOCK_FACTOR]
-        if not sub:
+        try:
+            with open(self.heap_path, "rb") as f:
+                f.seek(offset)
+                line = f.readline()
+            if not line:
+                return None
+            return json.loads(line.decode("utf-8"))
+        except Exception:
             return None
-        keys = [mx for mx, _ in sub]
-        j = self._first_ge_index(keys, key)
-        return (start_idx_root + j) if j < len(sub) else (start_idx_root + len(sub) - 1)
 
-    def _leaf_find_primary(self, start_idx_leaf, key):
-        sub = self.leaf[start_idx_leaf:start_idx_leaf + LEAF_BLOCK_FACTOR]
-        if not sub:
-            return None
-        keys = [mx for mx, _ in sub]
-        j = self._first_ge_index(keys, key)
-        return sub[j][1] if j < len(sub) else sub[-1][1]
+    # ------------------ Directorio de 3 niveles ------------------
 
-    def _find_primary_page_for_key(self, key):
-        self._load_index()
-        if not self.leaf:
-            return None
-        s = self._super_find_block(key)
-        if s is None:
-            return self.leaf[-1][1]
-        r_idx = self._root_find_block(s, key)
-        start_leaf = self.root[r_idx][1]
-        return self._leaf_find_primary(start_leaf, key)
-
-    def build_from_records(self, records):
-        recs = sorted(records, key=lambda r: r.id)
-        with open(self.filename, 'wb') as f:
-            for i in range(0, len(recs), BLOCK_FACTOR):
-                chunk = recs[i:i + BLOCK_FACTOR]
-                page = DataPage(chunk, -1)
-                self._append_page(f, page)
-        self.build_index()
-
-    def add(self, record: Record):
-        self._load_index()
-        if not os.path.exists(self.filename):
-            with open(self.filename, 'wb') as f:
-                self._append_page(f, DataPage([record], -1))
-            self.build_index()
-            return
-        target_page = self._find_primary_page_for_key(record.id)
-        if target_page is None:
-            with open(self.filename, 'wb') as f:
-                self._append_page(f, DataPage([record], -1))
-            self.build_index()
-            return
-        with open(self.filename, 'r+b') as f:
-            page = self._read_page(f, target_page)
-            if page.has_space():
-                ids = [r.id for r in page.records]
-                pos = 0
-                for i, v in enumerate(ids):
-                    if record.id <= v:
-                        pos = i
-                        break
-                else:
-                    pos = len(ids)
-                page.records.insert(pos, record)
-                self._write_page(f, target_page, page)
-                return
-            prev = target_page
-            curr = page.next_page
-            while curr != -1:
-                p = self._read_page(f, curr)
-                if p.has_space():
-                    p.records.append(record)
-                    self._write_page(f, curr, p)
-                    return
-                prev = curr
-                curr = p.next_page
-            new_page = DataPage([record], -1)
-            new_no = self._append_page(f, new_page)
-            if prev == target_page:
-                page.next_page = new_no
-                self._write_page(f, target_page, page)
+    def _rebuild_directories(self):
+        """Reconstruye dir_keys (leaf), root y super_root basado en leaves."""
+        self.dir_keys = []
+        for bucket in self.leaves:
+            if bucket:
+                self.dir_keys.append(bucket[0][0])
             else:
-                last = self._read_page(f, prev)
-                last.next_page = new_no
-                self._write_page(f, prev, last)
+                self.dir_keys.append(2**63-1)  # placeholder "infinito"
 
-    def search(self, key):
-        self._load_index()
-        if not os.path.exists(self.filename):
-            return []
-        page_no = self._find_primary_page_for_key(key)
-        if page_no is None:
-            return []
-        result = []
-        with open(self.filename, 'rb') as f:
-            p = self._read_page(f, page_no)
-            for r in p.records:
-                if r.id == key:
-                    result.append(r)
-                elif r.id > key:
-                    break
-            ov = p.next_page
-            while ov != -1:
-                op = self._read_page(f, ov)
-                for r in op.records:
-                    if r.id == key:
-                        result.append(r)
-                ov = op.next_page
-        return result
+        # Root: agrupa leaves en bloques de root_factor
+        self.root = []
+        if self.dir_keys:
+            leaf_max = []
+            for i, bucket in enumerate(self.leaves):
+                mx = bucket[-1][0] if bucket else 2**63-1
+                leaf_max.append((mx, i))
+            for gstart in range(0, len(leaf_max), self.root_factor):
+                group = leaf_max[gstart:gstart+self.root_factor]
+                gmax = max(mx for mx, _ in group)
+                self.root.append((gmax, group[0][1]))
 
-    def range_search(self, start, end):
-        self._load_index()
-        if not os.path.exists(self.filename):
-            return []
-        if start > end:
-            start, end = end, start
-        res = []
-        start_page = self._find_primary_page_for_key(start)
-        if start_page is None:
-            return res
-        total = self.primary_page_count
-        with open(self.filename, 'rb') as f:
-            p = start_page
-            while p < total:
-                page = self._read_page(f, p)
-                for r in page.records:
-                    if start <= r.id <= end:
-                        res.append(r)
-                    elif r.id > end:
-                        return res
-                ov = page.next_page
-                while ov != -1:
-                    op = self._read_page(f, ov)
-                    for r in op.records:
-                        if start <= r.id <= end:
-                            res.append(r)
-                    ov = op.next_page
-                p += 1
-        return res
+        # Super-root: agrupa roots en bloques de super_factor
+        self.super_root = []
+        if self.root:
+            for gstart in range(0, len(self.root), self.super_factor):
+                group = self.root[gstart:gstart+self.super_factor]
+                gmax = max(mx for mx, _ in group)
+                self.super_root.append((gmax, gstart))
 
-    def remove(self, key):
-        self._load_index()
-        if not os.path.exists(self.filename):
+    # ------------------ Navegación ------------------
+
+    def _leaf_index_for_key(self, key: int) -> int:
+        """Busca bucket usando dir_keys con bisect. Si no hay dir_keys, retorna 0."""
+        if not self.dir_keys:
             return 0
+        idx = bisect_right(self.dir_keys, key) - 1
+        if idx < 0:
+            idx = 0
+        if idx >= len(self.leaves):
+            idx = len(self.leaves) - 1
+        return idx
+
+    # ------------------ API ------------------
+
+    def add(self, key: int, row: Dict) -> bool:
+        """Inserta (key,row). Si el bucket está lleno, inserta en overflow."""
+        if not isinstance(key, int):
+            raise ValueError("ISAMIndex: la key debe ser int")
+        off = self._heap_append(row)
+
+        bi = self._leaf_index_for_key(key)
+        bucket = self.leaves[bi]
+        if len(bucket) < self.block_factor:
+            i = 0
+            while i < len(bucket) and bucket[i][0] <= key:
+                i += 1
+            bucket.insert(i, (key, off))
+            if not self.dir_keys:
+                self.dir_keys = [key] + [2**63-1]*(len(self.leaves)-1)
+                self._rebuild_directories()
+            else:
+                if key < self.dir_keys[bi]:
+                    self.dir_keys[bi] = key
+                    self._rebuild_directories()
+            self._save()
+            return True
+
+        of = self.overflow.setdefault(bi, [])
+        j = 0
+        while j < len(of) and of[j][0] <= key:
+            j += 1
+        of.insert(j, (key, off))
+        self._save()
+        return True
+
+    def search(self, key: int) -> List[Dict]:
+        """Igualdad por key. Devuelve una lista de filas (puede haber duplicados)."""
+        if not isinstance(key, int):
+            return []
+        bi = self._leaf_index_for_key(key)
+        out: List[Dict] = []
+        for k, off in self.leaves[bi]:
+            if k == key:
+                rec = self._heap_read_at(off)
+                if rec is not None:
+                    out.append(rec)
+        for k, off in self.overflow.get(bi, []):
+            if k == key:
+                rec = self._heap_read_at(off)
+                if rec is not None:
+                    out.append(rec)
+        return out
+
+    def range_search(self, begin_key: int, end_key: int) -> List[Dict]:
+        """Rango inclusivo [begin, end]."""
+        if begin_key > end_key:
+            begin_key, end_key = end_key, begin_key
+        out: List[Dict] = []
+        if not self.leaves:
+            return out
+        start_bi = self._leaf_index_for_key(begin_key)
+        last_idx = bisect_right(self.dir_keys, end_key) - 1 if self.dir_keys else len(self.leaves)-1
+        if last_idx < 0:
+            last_idx = 0
+        if last_idx >= len(self.leaves):
+            last_idx = len(self.leaves) - 1
+        for bi in range(start_bi, last_idx + 1):
+            for k, off in self.leaves[bi]:
+                if begin_key <= k <= end_key:
+                    rec = self._heap_read_at(off)
+                    if rec is not None:
+                        out.append(rec)
+            for k, off in self.overflow.get(bi, []):
+                if begin_key <= k <= end_key:
+                    rec = self._heap_read_at(off)
+                    if rec is not None:
+                        out.append(rec)
+        return out
+
+    def remove(self, key: int) -> int:
+        """Elimina todas las ocurrencias de 'key' del índice (no compacta heap). Retorna # entradas eliminadas."""
         removed = 0
-        page_no = self._find_primary_page_for_key(key)
-        if page_no is None:
+        if not self.leaves:
             return 0
-        with open(self.filename, 'r+b') as f:
-            page = self._read_page(f, page_no)
-            before = len(page.records)
-            page.records = [r for r in page.records if r.id != key]
-            removed += before - len(page.records)
-            self._write_page(f, page_no, page)
-            ov = page.next_page
-            while ov != -1:
-                op = self._read_page(f, ov)
-                before = len(op.records)
-                op.records = [r for r in op.records if r.id != key]
-                removed += before - len(op.records)
-                self._write_page(f, ov, op)
-                ov = op.next_page
+        bi = self._leaf_index_for_key(key)
+        before = len(self.leaves[bi])
+        self.leaves[bi] = [kv for kv in self.leaves[bi] if kv[0] != key]
+        removed += before - len(self.leaves[bi])
+        if bi in self.overflow:
+            before = len(self.overflow[bi])
+            self.overflow[bi] = [kv for kv in self.overflow[bi] if kv[0] != key]
+            removed += before - len(self.overflow[bi])
+            if not self.overflow[bi]:
+                self.overflow.pop(bi, None)
+        # actualizar mínimas
+        new_min = self.leaves[bi][0][0] if self.leaves[bi] else 2**63-1
+        if self.dir_keys and self.dir_keys[bi] != new_min:
+            self.dir_keys[bi] = new_min
+            self._rebuild_directories()
+        self._save()
         return removed
-    def scanAll(self):
-        if not os.path.exists(self.filename):
-            print("(Archivo vacío)")
-            return
-        total = self._total_pages()
-        with open(self.filename, 'rb') as f:
-            print("==== PÁGINAS DE DATOS ====")
-            for pno in range(total):
-                page = self._read_page(f, pno)
-                print(f"\nPágina {pno} [size={len(page.records)}, next={page.next_page}]")
-                for r in page.records:
-                    print(f"  - {r}")
-        self._load_index()
-        print("\n==== ÍNDICE LEAF ====")
-        for mx, pno in self.leaf:
-            print(f"  ({mx} → pág {pno})")
-        print("\n==== ÍNDICE ROOT ====")
-        for mx, start in self.root:
-            print(f"  ({mx} → leaf_idx {start})")
-        print("\n==== ÍNDICE SUPER ROOT ====")
-        for mx, start in self.super_root:
-            print(f"  ({mx} → root_idx {start})")
+
+    def get_all(self) -> List[Dict]:
+        out: List[Dict] = []
+        for bi, bucket in enumerate(self.leaves):
+            for _, off in bucket:
+                rec = self._heap_read_at(off)
+                if rec is not None:
+                    out.append(rec)
+            for _, off in self.overflow.get(bi, []):
+                rec = self._heap_read_at(off)
+                if rec is not None:
+                    out.append(rec)
+        return out
+
+    # ------------- Utilidades -------------
+
+    def build_from_records(self, items: List[Tuple[int, Dict]]):
+        """Construye la primaria desde cero con items (key,row). Overflow vacía, heap reconstruido."""
+        items = sorted(items, key=lambda x: x[0])
+        if os.path.exists(self.heap_path):
+            try:
+                os.remove(self.heap_path)
+            except Exception:
+                pass
+        self.leaves = []
+        bucket: List[Tuple[int, int]] = []
+        for key, row in items:
+            off = self._heap_append(row)
+            bucket.append((int(key), off))
+            if len(bucket) >= self.block_factor:
+                self.leaves.append(bucket)
+                bucket = []
+        if bucket or not self.leaves:
+            self.leaves.append(bucket)
+        self.overflow = {}
+        self._rebuild_directories()
+        self._save()
+
+    def clear(self):
+        """Vacia índice y heap."""
+        if os.path.exists(self.heap_path):
+            try:
+                os.remove(self.heap_path)
+            except Exception:
+                pass
+        self._init_empty()
+        self._save()
+
+
+def create_isam_index(file_path: str, block_factor: int = 4) -> ISAMIndex:
+    return ISAMIndex(file_path=file_path, block_factor=block_factor)
+
+# Alias para compatibilidad con adaptadores existentes
+ISAMFile = ISAMIndex
+
+def Record(id: int, *args, **kwargs):
+    class _R:
+        def __init__(self, id):
+            self.id = id
+        def __repr__(self):
+            return f"<Record id={self.id}>"
+    return _R(id)
