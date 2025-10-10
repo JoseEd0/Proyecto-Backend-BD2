@@ -384,14 +384,12 @@ if __name__ == "__main__":
         if 'comentario' in query:
             print(f"   Nota: {query['comentario']}")
 
-    # Mostrar escenarios de testing
     print("\n=== ESCENARIOS DE PRUEBA ===")
     scenarios = get_test_scenarios()
     for i, scenario in enumerate(scenarios, 1):
         print(f"\n{i}. {scenario['nombre']}")
         print(f"   {scenario['descripcion']}")
 
-    # Generar datos de rendimiento
     print("\n=== GENERANDO DATOS DE RENDIMIENTO ===")
     perf_data = generate_performance_data(100)  # 100 registros para demo
 
