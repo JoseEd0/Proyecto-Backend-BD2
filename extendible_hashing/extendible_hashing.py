@@ -1,390 +1,303 @@
 import os
-import struct
 import hashlib
-import pickle
+import csv
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-# ---------- Formatos binarios ----------
-# Directory header: global_depth (B), max_global_depth (B), next_bucket_id (I), dir_len (I)
-DIR_HEADER_FMT = "B B I I"
-DIR_HEADER_SIZE = struct.calcsize(DIR_HEADER_FMT)
-DIR_ENTRY_FMT = "I"   # bucket_id per directory entry (unsigned int)
-DIR_ENTRY_SIZE = struct.calcsize(DIR_ENTRY_FMT)
-
-# Bucket header: local_depth (B), is_overflow (B), next_bucket_id (I), num_items (I)
-BUCKET_HEADER_FMT = "B B I I"
-BUCKET_HEADER_SIZE = struct.calcsize(BUCKET_HEADER_FMT)
-# Each entry: key_len (H), key bytes (utf-8), val_len (I), val bytes (pickle)
-KEY_LEN_FMT = "H"
-KEY_LEN_SIZE = struct.calcsize(KEY_LEN_FMT)
-VAL_LEN_FMT = "I"
-VAL_LEN_SIZE = struct.calcsize(VAL_LEN_FMT)
-
-# ---------- Helpers ----------
-def md5_bits(key):
-    """Devuelve una cadena binaria del hash MD5 (128 bits)."""
+def md5_hash(key: str, depth: int) -> int:
+    """Genera hash MD5 y retorna los últimos 'depth' bits como entero."""
     h = hashlib.md5(str(key).encode()).hexdigest()
-    return bin(int(h, 16))[2:].zfill(128)
+    bits = bin(int(h, 16))[2:].zfill(128)
+    return int(bits[-depth:], 2) if depth > 0 else 0
 
-# ---------- Bucket en disco ----------
-class DiskBucket:
-    def _init_(self, path: Path, capacity: int, local_depth: int = 1, is_overflow: bool = False, next_bucket_id: int = 0):
+class TextBucket:
+    """Bucket almacenado en archivo de texto plano."""
+
+    def _init_(self, path: Path, capacity: int, local_depth: int = 1):
         self.path = Path(path)
         self.capacity = capacity
         self.local_depth = local_depth
-        self.is_overflow = 1 if is_overflow else 0
-        self.next_bucket_id = next_bucket_id  # 0 significa 'no next'
-        self.items = {}  # key(str) -> value (python object)
+        self.next_bucket_id = 0
+        self.records: List[Dict[str, Any]] = []
+
         if self.path.exists():
             self._load()
         else:
             self._save()
 
     def _load(self):
-        with open(self.path, "rb") as f:
-            header = f.read(BUCKET_HEADER_SIZE)
-            ld, is_ov, next_id, n_items = struct.unpack(BUCKET_HEADER_FMT, header)
-            self.local_depth = ld
-            self.is_overflow = is_ov
-            self.next_bucket_id = next_id
-            self.items = {}
-            for _ in range(n_items):
-                key_len_bytes = f.read(KEY_LEN_SIZE)
-                if not key_len_bytes:
-                    break
-                (klen,) = struct.unpack(KEY_LEN_FMT, key_len_bytes)
-                kbytes = f.read(klen)
-                (vlen,) = struct.unpack(VAL_LEN_FMT, f.read(VAL_LEN_SIZE))
-                vbytes = f.read(vlen)
-                key = kbytes.decode("utf-8")
-                val = pickle.loads(vbytes)
-                self.items[key] = val
+        """Carga bucket desde archivo texto."""
+        with open(self.path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        if len(lines) < 2:
+            return
+
+        meta = lines[0].strip().split(',')
+        self.local_depth = int(meta[0])
+        self.next_bucket_id = int(meta[1])
+
+        self.records = []
+        reader = csv.DictReader(lines[1:])
+        for row in reader:
+            self.records.append(row)
 
     def _save(self):
-        with open(self.path, "wb") as f:
-            header = struct.pack(BUCKET_HEADER_FMT, self.local_depth, self.is_overflow, self.next_bucket_id, len(self.items))
-            f.write(header)
-            for k, v in self.items.items():
-                kbytes = k.encode("utf-8")
-                vbytes = pickle.dumps(v)
-                f.write(struct.pack(KEY_LEN_FMT, len(kbytes)))
-                f.write(kbytes)
-                f.write(struct.pack(VAL_LEN_FMT, len(vbytes)))
-                f.write(vbytes)
+        """Guarda bucket en archivo texto."""
+        with open(self.path, 'w', encoding='utf-8', newline='') as f:
+            f.write(f"{self.local_depth},{self.next_bucket_id}\n")
 
-    def is_full(self):
-        return len(self.items) >= self.capacity
+            if self.records:
+                fieldnames = self.records[0].keys()
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.records)
 
-    def insert(self, key, value):
-        self.items[key] = value
+    def is_full(self) -> bool:
+        return len(self.records) >= self.capacity
+
+    def insert(self, record: Dict[str, Any]):
+        """Inserta o actualiza registro."""
+        key = record.get('id')
+        for i, rec in enumerate(self.records):
+            if rec.get('id') == key:
+                self.records[i] = record
+                self._save()
+                return
+        self.records.append(record)
         self._save()
 
-    def remove(self, key):
-        if key in self.items:
-            del self.items[key]
-            self._save()
-            return True
+    def delete(self, key: str) -> bool:
+        """Elimina registro por key."""
+        for i, rec in enumerate(self.records):
+            if rec.get('id') == key:
+                del self.records[i]
+                self._save()
+                return True
         return False
 
-    def search(self, key):
-        return self.items.get(key, None)
+    def search(self, key: str) -> Optional[Dict[str, Any]]:
+        """Busca registro por key."""
+        for rec in self.records:
+            if rec.get('id') == key:
+                return rec
+        return None
 
-    def all_items(self):
-        return dict(self.items)
+    def get_all(self) -> List[Dict[str, Any]]:
+        return list(self.records)
 
-    def clear(self):
-        self.items = {}
-        self.next_bucket_id = 0
+class TextDirectory:
+    """Directorio almacenado en archivo texto."""
+
+    def _init_(self, path: Path, global_depth: int, max_depth: int):
+        self.path = Path(path)
+        self.global_depth = global_depth
+        self.max_depth = max_depth
+        self.next_bucket_id = 1
+        self.entries: List[int] = []
+
+        if self.path.exists():
+            self._load()
+        else:
+            self._initialize()
+
+    def _load(self):
+        """Carga directorio desde archivo."""
+        with open(self.path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        meta = lines[0].strip().split(',')
+        self.global_depth = int(meta[0])
+        self.max_depth = int(meta[1])
+        self.next_bucket_id = int(meta[2])
+
+        self.entries = [int(line.strip()) for line in lines[1:]]
+
+    def _save(self):
+        """Guarda directorio en archivo."""
+        with open(self.path, 'w', encoding='utf-8') as f:
+            f.write(f"{self.global_depth},{self.max_depth},{self.next_bucket_id}\n")
+            for bid in self.entries:
+                f.write(f"{bid}\n")
+
+    def _initialize(self):
+        """Inicializa directorio vacío."""
+        size = 2 ** self.global_depth
+        self.entries = [self.next_bucket_id] * size
+        self.next_bucket_id += 1
         self._save()
 
-    def _repr_(self):
-        return f"DiskBucket(path={self.path.name}, ld={self.local_depth}, ov={self.is_overflow}, next={self.next_bucket_id}, items={self.items})"
+    def get_bucket_id(self, key: str) -> int:
+        """Obtiene bucket_id para una key."""
+        idx = md5_hash(key, self.global_depth)
+        return self.entries[idx]
 
-# ---------- Directorio y lógica ----------
-class DiskExtendibleHashing:
-    def _init_(self, dir_path="eh_data", bucket_capacity=4, initial_global_depth=1, max_global_depth=4):
-        """
-        dir_path: carpeta donde se crean directory.dat y bucket_*.bin
-        bucket_capacity: items por bucket (sin contar overflow)
-        initial_global_depth: profundidad inicial (normalmente 1)
-        max_global_depth: límite a la profundidad global; si se alcanza, se usa chaining en lugar de duplicar.
-        """
-        self.base = Path(dir_path)
+    def double_directory(self):
+        """Duplica el directorio (incrementa global_depth)."""
+        self.entries = self.entries + self.entries[:]
+        self.global_depth += 1
+        self._save()
+
+    def allocate_bucket_id(self) -> int:
+        """Asigna nuevo bucket_id."""
+        bid = self.next_bucket_id
+        self.next_bucket_id += 1
+        self._save()
+        return bid
+
+    def update_pointers(self, old_bid: int, bid1: int, bid2: int, bit_position: int):
+        """Actualiza punteros tras split."""
+        for i in range(len(self.entries)):
+            if self.entries[i] == old_bid:
+                if ((i >> bit_position) & 1) == 0:
+                    self.entries[i] = bid1
+                else:
+                    self.entries[i] = bid2
+        self._save()
+
+class SQLHashEngine:
+    """Motor SQL simple con índice Extendible Hashing en archivos texto."""
+
+    def _init_(self, data_dir: str = "sql_data", bucket_capacity: int = 3,
+               initial_depth: int = 1, max_depth: int = 4):
+        self.base = Path(data_dir)
         self.buckets_dir = self.base / "buckets"
-        self.directory_file = self.base / "directory.dat"
-        self.bucket_capacity = bucket_capacity
         self.base.mkdir(parents=True, exist_ok=True)
         self.buckets_dir.mkdir(parents=True, exist_ok=True)
 
-        # Si existe directory.dat, cargar; si no, inicializar con 2^initial_global_depth buckets
-        if self.directory_file.exists():
-            self._load_directory()
-        else:
-            self.global_depth = initial_global_depth
-            self.max_global_depth = max_global_depth
-            # next bucket id (start after initial ones)
-            self.next_bucket_id = 0
-            # crear 2^global_depth buckets
-            dir_len = 2 ** self.global_depth
-            self.directory = []
-            for i in range(dir_len):
-                bid = self._new_bucket_id()
-                self.directory.append(bid)
-                self._create_bucket_file(bid, local_depth=self.global_depth if self.global_depth>1 else 1)
-            self._save_directory()
+        self.capacity = bucket_capacity
+        dir_path = self.base / "directory.txt"
 
-    # ---------- Directory persistence ----------
-    def _load_directory(self):
-        with open(self.directory_file, "rb") as f:
-            header = f.read(DIR_HEADER_SIZE)
-            gd, mgd, next_id, dir_len = struct.unpack(DIR_HEADER_FMT, header)
-            self.global_depth = gd
-            self.max_global_depth = mgd
-            self.next_bucket_id = next_id
-            self.directory = []
-            for _ in range(dir_len):
-                (bid,) = struct.unpack(DIR_ENTRY_FMT, f.read(DIR_ENTRY_SIZE))
-                self.directory.append(bid)
+        self.directory = TextDirectory(dir_path, initial_depth, max_depth)
 
-    def _save_directory(self):
-        with open(self.directory_file, "wb") as f:
-            dir_len = len(self.directory)
-            header = struct.pack(DIR_HEADER_FMT, self.global_depth, self.max_global_depth, self.next_bucket_id, dir_len)
-            f.write(header)
-            for bid in self.directory:
-                f.write(struct.pack(DIR_ENTRY_FMT, bid))
+        if not list(self.buckets_dir.glob("bucket_*.txt")):
+            bid = self.directory.entries[0]
+            self._create_bucket(bid, self.directory.global_depth)
 
-    def _bucket_path(self, bucket_id):
-        return self.buckets_dir / f"bucket_{bucket_id}.bin"
+    def _bucket_path(self, bucket_id: int) -> Path:
+        return self.buckets_dir / f"bucket_{bucket_id}.txt"
 
-    def _new_bucket_id(self):
-        # asigna y avanza next_bucket_id
-        if not hasattr(self, "next_bucket_id"):
-            self.next_bucket_id = 0
-        bid = self.next_bucket_id
-        self.next_bucket_id += 1
-        return bid
-
-    def _create_bucket_file(self, bucket_id, local_depth=1, is_overflow=False, next_bucket_id=0):
+    def _create_bucket(self, bucket_id: int, local_depth: int) -> TextBucket:
+        """Crea nuevo bucket."""
         path = self._bucket_path(bucket_id)
-        b = DiskBucket(path, capacity=self.bucket_capacity, local_depth=local_depth, is_overflow=is_overflow, next_bucket_id=next_bucket_id)
-        b._save()
-        return b
+        return TextBucket(path, self.capacity, local_depth)
 
-    def _load_bucket(self, bucket_id):
+    def _load_bucket(self, bucket_id: int) -> TextBucket:
+        """Carga bucket existente."""
         path = self._bucket_path(bucket_id)
         if not path.exists():
-            # crear uno vacío si no existe
-            return self._create_bucket_file(bucket_id, local_depth=self.global_depth)
-        return DiskBucket(path, capacity=self.bucket_capacity)
+            return self._create_bucket(bucket_id, self.directory.global_depth)
+        return TextBucket(path, self.capacity)
 
-    # ---------- Hash helpers ----------
-    def _get_index(self, key):
-        bits = md5_bits(key)
-        # tomar los últimos global_depth bits
-        idx = int(bits[-self.global_depth:], 2) if self.global_depth > 0 else 0
-        return idx
-
-    # ---------- Operaciones públicas ----------
-    def search(self, key):
-        idx = self._get_index(key)
-        bucket_id = self.directory[idx]
-        # recorrer cadena (incluyendo overflows)
-        bid = bucket_id
-        while bid != 0:
-            b = self._load_bucket(bid)
-            val = b.search(key)
-            if val is not None:
-                return val
-            bid = b.next_bucket_id
-        return None
-
-    def add(self, key, value):
-        idx = self._get_index(key)
-        bucket_id = self.directory[idx]
+    def _split_bucket(self, bucket_id: int):
+        """Divide un bucket."""
         bucket = self._load_bucket(bucket_id)
-
-        # si key ya existe en la cadena -> actualizar
-        bid = bucket_id
-        last_bucket = bucket
-        last_bid = bucket_id
-
-        while bid != 0:
-            b = self._load_bucket(bid)
-            if key in b.items:
-                b.insert(key, value)  # sobrescribe
-                self._save_directory()
-                return
-            if b.next_bucket_id == 0:
-                last_bucket = b
-                last_bid = bid
-            bid = b.next_bucket_id
-
-        # si hay espacio en el último bucket de la cadena
-        if not last_bucket.is_full():
-            last_bucket.insert(key, value)
-            self._save_directory()
-            return
-
-        # Si bucket (y su cadena) está lleno -> intentar split si es posible
-        primary_bucket_id = bucket_id
-        primary_bucket = self._load_bucket(primary_bucket_id)
-
-        # Si se puede dividir sin duplicar
-        if primary_bucket.local_depth < self.global_depth:
-            self._split_bucket(primary_bucket_id)
-            self.add(key, value)
-            return
-        elif primary_bucket.local_depth == self.global_depth and self.global_depth < self.max_global_depth:
-            # duplicar directorio y dividir
-            self._double_directory()
-            self._split_bucket(primary_bucket_id)
-            self.add(key, value)
-            return
-        else:
-            # Límite alcanzado -> chaining overflow
-            new_bid = self._new_bucket_id()
-            new_bucket = self._create_bucket_file(new_bid, local_depth=primary_bucket.local_depth, is_overflow=True,
-                                                  next_bucket_id=0)
-            last_bucket.next_bucket_id = new_bid
-            last_bucket._save()
-            new_bucket.insert(key, value)
-            self._save_directory()
-            return
-
-    def remove(self, key):
-        idx = self._get_index(key)
-        bucket_id = self.directory[idx]
-        prev_bid = None
-        bid = bucket_id
-        while bid != 0:
-            b = self._load_bucket(bid)
-            if key in b.items:
-                removed = b.remove(key)
-                # if this was an overflow bucket and becomes empty, we could reclaim it
-                # For simplicity no reclamation now (but we unlink if empty overflow)
-                if removed and b.is_overflow and len(b.items) == 0:
-                    # unlink from chain
-                    if prev_bid is not None:
-                        prev_b = self._load_bucket(prev_bid)
-                        prev_b.next_bucket_id = b.next_bucket_id
-                        prev_b._save()
-                    else:
-                        # it's the primary bucket (shouldn't be overflow normally), just clear
-                        pass
-                    # optionally delete file
-                    try:
-                        os.remove(b.path)
-                    except:
-                        pass
-                self._save_directory()
-                return True
-            prev_bid = bid
-            bid = b.next_bucket_id
-        return False
-
-    # ---------- Internals: doubling and splitting ----------
-    def _double_directory(self):
-        old_len = len(self.directory)
-        self.directory = self.directory + self.directory[:]  # duplicate pointers
-        self.global_depth += 1
-        # persist next_bucket_id in directory header by saving file
-        self._save_directory()
-
-    def _gather_chain_items(self, bucket_id):
-        """Recoge todos los items del bucket 'principal' y su cadena de overflow
-           Devuelve lista de (key, val) y borra los archivos de overflow (manteniendo el principal).
-        """
-        items = {}
-        bid = bucket_id
-        b = self._load_bucket(bid)
-        items.update(b.items)
-        # recorrer siguientes y acumular; luego borrar esos archivos y quitar enlaces
-        next_bid = b.next_bucket_id
-        while next_bid != 0:
-            nb = self._load_bucket(next_bid)
-            items.update(nb.items)
-            # borrar archivo overflow
-            try:
-                os.remove(nb.path)
-            except:
-                pass
-            next_bid = nb.next_bucket_id
-        # Reset primary bucket chain info
-        b.next_bucket_id = 0
-        b.items = {}
-        b._save()
-        return items
-
-    def _split_bucket(self, bucket_id):
-        """Divide el bucket indicado. Maneja redistribución y actualización de punteros del directorio."""
-        primary = self._load_bucket(bucket_id)
-        old_ld = primary.local_depth
+        old_ld = bucket.local_depth
         new_ld = old_ld + 1
-        primary.local_depth = new_ld
 
-        # Si el local_depth > global_depth, NO duplicar aquí (el llamador decide si duplicar antes)
-        # Creamos dos nuevos buckets
-        bid1 = self._new_bucket_id()
-        bid2 = self._new_bucket_id()
-        b1 = self._create_bucket_file(bid1, local_depth=new_ld, is_overflow=False, next_bucket_id=0)
-        b2 = self._create_bucket_file(bid2, local_depth=new_ld, is_overflow=False, next_bucket_id=0)
+        bid1 = self.directory.allocate_bucket_id()
+        bid2 = self.directory.allocate_bucket_id()
+        b1 = self._create_bucket(bid1, new_ld)
+        b2 = self._create_bucket(bid2, new_ld)
 
-        # Recolectar todos los items del bucket principal y su cadena de overflow (para evitar perder datos)
-        items = self._gather_chain_items(bucket_id)  # esto deja primary vacío y sin next
-
-        # Redistribuir items según el bit de decisión (bit en posición local_depth desde el final)
-        for k, v in items.items():
-            bits = md5_bits(k)
-            # bit a usar es el -new_ld'th desde el final (0-index)
-            decision_bit = bits[-new_ld]
-            if decision_bit == "0":
-                b1.insert(k, v)
+        all_records = bucket.get_all()
+        for rec in all_records:
+            key = rec.get('id')
+            bits = bin(int(hashlib.md5(str(key).encode()).hexdigest(), 16))[2:].zfill(128)
+            if bits[-new_ld] == '0':
+                b1.insert(rec)
             else:
-                b2.insert(k, v)
+                b2.insert(rec)
 
-        # Ahora actualizar el directorio: las entradas que referían al bucket original deben referir a b1 o b2
-        dir_len = len(self.directory)
-        for i in range(dir_len):
-            if self.directory[i] == bucket_id:
-                # elegir según (i >> (new_ld-1)) & 1   OR usando bits
-                # otra forma: comprobar el bit en la representacion del indice
-                if ((i >> (new_ld - 1)) & 1) == 1:
-                    self.directory[i] = bid2
-                else:
-                    self.directory[i] = bid1
+        self.directory.update_pointers(bucket_id, bid1, bid2, new_ld - 1)
 
-        # sobrescribir el archivo del bucket original con b1 (para ahorrar IDs?) -> en este diseño mantenemos b1,b2
-        # Guardar cambios en directorio
-        self._save_directory()
+        try:
+            os.remove(self._bucket_path(bucket_id))
+        except:
+            pass
 
-    # ---------- Utilidades de inspección ----------
-    def dump_status(self):
-        s = f"Global depth: {self.global_depth}, Max global depth: {self.max_global_depth}, Dir size: {len(self.directory)}, next_bucket_id: {self.next_bucket_id}\n"
-        for i, bid in enumerate(self.directory):
-            b = self._load_bucket(bid)
-            s += f"  [{i:0{self.global_depth}b}] -> bucket_{bid}.bin  (ld={b.local_depth}, ov={b.is_overflow}, next={b.next_bucket_id}, items={len(b.items)})\n"
+    def INSERT(self, record: Dict[str, Any]):
+        """INSERT: Inserta registro con clave 'id'."""
+        if 'id' not in record:
+            raise ValueError("Record must have 'id' field")
+
+        key = str(record['id'])
+        bid = self.directory.get_bucket_id(key)
+        bucket = self._load_bucket(bid)
+
+        if bucket.search(key):
+            bucket.insert(record)
+            return
+
+        if bucket.is_full():
+            if bucket.local_depth < self.directory.global_depth:
+                self._split_bucket(bid)
+                self.INSERT(record)
+            elif bucket.local_depth == self.directory.global_depth < self.directory.max_depth:
+                self.directory.double_directory()
+                self._split_bucket(bid)
+                self.INSERT(record)
+            else:
+                bucket.insert(record)
+        else:
+            bucket.insert(record)
+
+    def SELECT(self, key: str) -> Optional[Dict[str, Any]]:
+        """SELECT: Busca registro por id."""
+        bid = self.directory.get_bucket_id(key)
+        bucket = self._load_bucket(bid)
+        return bucket.search(key)
+
+    def DELETE(self, key: str) -> bool:
+        """DELETE: Elimina registro por id."""
+        bid = self.directory.get_bucket_id(key)
+        bucket = self._load_bucket(bid)
+        return bucket.delete(key)
+
+    def SELECT_ALL(self) -> List[Dict[str, Any]]:
+        """SELECT *: Retorna todos los registros."""
+        all_records = []
+        unique_buckets = set(self.directory.entries)
+        for bid in unique_buckets:
+            bucket = self._load_bucket(bid)
+            all_records.extend(bucket.get_all())
+        return all_records
+
+    def DUMP_INDEX(self) -> str:
+        """Muestra estructura del índice."""
+        s = f"=== SQL HASH INDEX ===\n"
+        s += f"Global Depth: {self.directory.global_depth}\n"
+        s += f"Max Depth: {self.directory.max_depth}\n"
+        s += f"Directory Size: {len(self.directory.entries)}\n"
+        s += f"Next Bucket ID: {self.directory.next_bucket_id}\n\n"
+
+        for i, bid in enumerate(self.directory.entries):
+            bucket = self._load_bucket(bid)
+            s += f"[{i:0{self.directory.global_depth}b}] -> bucket_{bid}.txt "
+            s += f"(ld={bucket.local_depth}, records={len(bucket.records)})\n"
+
         return s
 
+if __name__ == "_main_":
+    db = SQLHashEngine(data_dir="sql_data", bucket_capacity=2, initial_depth=1, max_depth=3)
 
-# crear la estructura en disco (carpeta 'eh_data')
-eh = DiskExtendibleHashing(dir_path="eh_data", bucket_capacity=2, initial_global_depth=1, max_global_depth=3)
+    db.INSERT({"id": "001", "name": "Alice", "age": 25})
+    db.INSERT({"id": "002", "name": "Bob", "age": 30})
+    db.INSERT({"id": "003", "name": "Charlie", "age": 35})
+    db.INSERT({"id": "004", "name": "Diana", "age": 28})
+    db.INSERT({"id": "005", "name": "Eve", "age": 22})
 
-# insertar
-eh.add("A", {"val": 1})
-eh.add("B", {"val": 2})
-eh.add("C", {"val": 3})
-eh.add("D", {"val": 4})
-eh.add("E", {"val": 5})
+    print(db.DUMP_INDEX())
 
-print(eh.dump_status())
+    print("\nSELECT id='002':")
+    print(db.SELECT("002"))
 
-# buscar
-print("B ->", eh.search("B"))
+    print("\nSELECT ALL:")
+    for record in db.SELECT_ALL():
+        print(record)
 
-# borrar
-eh.remove("B")
-print("B ->", eh.search("B"))
+    print("\nDELETE id='002':")
+    db.DELETE("002")
+    print(db.SELECT("002"))
 
-# ver status final
-print(eh.dump_status())
+    print("\n" + db.DUMP_INDEX())

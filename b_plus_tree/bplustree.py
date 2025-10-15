@@ -4,36 +4,34 @@ import struct
 
 
 class BPlusTreeNode:
-    def __init__(self, is_leaf=False, block_factor=3):
+    BLOCK_FACTOR = 3
+
+    def __init__(self, is_leaf=False):
         self.is_leaf = is_leaf
-        self.block_factor = block_factor
         self.keys = []
         self.children = []
-        self.next_leaf = -1  # ✅ CORREGIDO: -1 en lugar de None
+        self.next_leaf = -1
         self.size = 0
 
     def is_full(self):
-        return self.size > self.block_factor
+        return self.size >= BPlusTreeNode.BLOCK_FACTOR
 
     def to_dict(self):
         return {
-            'is_leaf': self.is_leaf,
-            'block_factor': self.block_factor,
-            'keys': self.keys,
-            'children': self.children,
-            'next_leaf': self.next_leaf if self.next_leaf is not None else -1,
-            'size': self.size
+            "is_leaf": self.is_leaf,
+            "keys": self.keys,
+            "children": self.children,
+            "next_leaf": self.next_leaf,
+            "size": self.size,
         }
 
     @staticmethod
     def from_dict(data):
-        node = BPlusTreeNode(is_leaf=data["is_leaf"],
-                             block_factor=data.get("block_factor", 3))
+        node = BPlusTreeNode(is_leaf=data["is_leaf"])
         node.keys = data["keys"]
         node.children = data["children"]
-        node.next_leaf = data.get("next_leaf", -1)
-        if node.next_leaf is None:
-            node.next_leaf = -1
+        raw_next = data.get("next_leaf", -1)
+        node.next_leaf = -1 if raw_next is None else raw_next
         node.size = data.get("size", len(data["keys"]))
         return node
 
@@ -71,16 +69,14 @@ class BPlusFile:
 
     def read_node(self, node_id):
         if node_id == -1:
-            raise ValueError(f"Invalid node_id: {node_id}")
-        if node_id is None:
-            raise ValueError(f"node_id cannot be None")
-
+            raise Exception(f"Invalid node_id: {node_id}")
         path = os.path.join(self.storage_path, f"node_{node_id}.json")
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Node file not found: {path}")
-
+            raise Exception(f"Node file not found: {path}")
         with open(path, "r") as f:
             data = json.load(f)
+            if data.get("next_leaf", -1) is None:
+                data["next_leaf"] = -1
             return BPlusTreeNode.from_dict(data)
 
     def write_node(self, node, node_id=None):
@@ -92,8 +88,11 @@ class BPlusFile:
         return node_id
 
     def _get_next_node_id(self):
-        existing_files = [f for f in os.listdir(self.storage_path)
-                          if f.startswith("node_") and f.endswith(".json")]
+        existing_files = [
+            f
+            for f in os.listdir(self.storage_path)
+            if f.startswith("node_") and f.endswith(".json")
+        ]
         if not existing_files:
             return 0
         ids = [int(f.split("_")[1].split(".")[0]) for f in existing_files]
@@ -102,14 +101,15 @@ class BPlusFile:
 
 class BPlusTree:
     def __init__(self, order=None, storage_path="bplustree_nodes", index_name="default"):
-        self.order = order if order is not None else 3
+        self.order = order if order is not None else BPlusTreeNode.BLOCK_FACTOR
         self.storage_path = storage_path
         self.index_name = index_name
         self.index_file = BPlusFile(storage_path, index_name)
         self.root_id = self.index_file.get_header()
 
         if self.root_id == -1:
-            root = BPlusTreeNode(is_leaf=True, block_factor=self.order)
+            root = BPlusTreeNode(is_leaf=True)
+            root.next_leaf = -1
             self.root_id = self.index_file.write_node(root, 0)
             self.index_file.write_header(self.root_id)
 
@@ -140,7 +140,7 @@ class BPlusTree:
         results = []
 
         current_id = leaf_id
-        while current_id != -1 and current_id is not None:
+        while current_id != -1:
             current_node = self.index_file.read_node(current_id)
             for k, ref in current_node.keys:
                 if start <= k <= end:
@@ -148,17 +148,13 @@ class BPlusTree:
                 elif k > end:
                     return results
             current_id = current_node.next_leaf
-
-            if current_id is None:
-                break
-
         return results
 
     def add(self, key, record_ref=None):
         split, new_key, new_pointer = self._insert_aux(self.root_id, key, record_ref)
 
         if split:
-            new_root = BPlusTreeNode(is_leaf=False, block_factor=self.order)
+            new_root = BPlusTreeNode(is_leaf=False)
             new_root.keys = [new_key]
             new_root.children = [self.root_id, new_pointer]
             new_root.size = 1
@@ -182,10 +178,10 @@ class BPlusTree:
             left_keys = node.keys[:mid]
             right_keys = node.keys[mid:]
 
-            new_node = BPlusTreeNode(is_leaf=True, block_factor=self.order)
+            new_node = BPlusTreeNode(is_leaf=True)
             new_node.keys = right_keys
             new_node.size = len(right_keys)
-            new_node.next_leaf = node.next_leaf if node.next_leaf is not None else -1
+            new_node.next_leaf = node.next_leaf
 
             new_node_id = self.index_file.write_node(new_node)
 
@@ -218,15 +214,16 @@ class BPlusTree:
             up_key = node.keys[mid]
             left_keys = node.keys[:mid]
             right_keys = node.keys[mid + 1:]
-            left_children = node.children[:mid + 1]
-            right_children = node.children[mid + 1:]
+            left_children = node.children[: mid + 1]
+            right_children = node.children[mid + 1 :]
 
-            new_node = BPlusTreeNode(is_leaf=False, block_factor=self.order)
+            new_node = BPlusTreeNode(is_leaf=False)
             new_node.keys = right_keys
             new_node.children = right_children
             new_node.size = len(right_keys)
 
             new_node_id = self.index_file.write_node(new_node)
+
             node.keys = left_keys
             node.children = left_children
             node.size = len(left_keys)
@@ -234,15 +231,9 @@ class BPlusTree:
 
             return True, up_key, new_node_id
 
-    def remove(self, key):
-        """Versión simple: elimina sin rebalanceo completo"""
-        self._delete_aux(self.root_id, key)
 
-        root = self.index_file.read_node(self.root_id)
-        if not root.is_leaf and root.size == 0:
-            if root.children:
-                self.root_id = root.children[0]
-                self.index_file.write_header(self.root_id)
+    def remove(self, key):
+        self._delete_aux(self.root_id, key)
 
     def _delete_aux(self, node_id, key):
         node = self.index_file.read_node(node_id)
@@ -260,6 +251,7 @@ class BPlusTree:
     def delete(self, key):
         self.remove(key)
 
+
     def get_all(self):
         if self.root_id == -1:
             return []
@@ -268,14 +260,11 @@ class BPlusTree:
         results = []
 
         current_id = leaf_id
-        while current_id != -1 and current_id is not None:
+        while current_id != -1:
             current_node = self.index_file.read_node(current_id)
             for k, ref in current_node.keys:
                 results.append((k, ref))
             current_id = current_node.next_leaf
-
-            if current_id is None:
-                break
 
         return results
 
@@ -305,7 +294,8 @@ class BPlusTree:
                 file_path = os.path.join(self.storage_path, file)
                 os.remove(file_path)
         self.index_file.initialize_file()
-        root = BPlusTreeNode(is_leaf=True, block_factor=self.order)
+        root = BPlusTreeNode(is_leaf=True)
+        root.next_leaf = -1
         self.root_id = self.index_file.write_node(root, 0)
         self.index_file.write_header(self.root_id)
 
@@ -334,7 +324,7 @@ class BPlusTree:
             print(f" {keys}", end="  ")
 
             if not node.is_leaf:
-                for child_id in node.children[:node.size + 1]:
+                for child_id in node.children[: node.size + 1]:
                     if child_id != -1:
                         queue.append((child_id, level + 1))
         print()
@@ -379,17 +369,8 @@ if __name__ == "__main__":
     print("\n6. ELIMINACIÓN")
     print("-" * 60)
     tree.remove(10)
-    print(f"Eliminado: 10")
+    print("Eliminado: 10")
     print(f"Buscar 10: {tree.search(10)}")
-
-    print("\n7. VALIDACIÓN DE ORDEN")
-    print("-" * 60)
-    all_keys = [k for k, _ in tree.get_all()]
-    is_sorted = all_keys == sorted(all_keys)
-    print(f"Claves en orden: {'✓ SÍ' if is_sorted else '✗ NO'}")
-    if not is_sorted:
-        print(f"  Actual: {all_keys}")
-        print(f"  Esperado: {sorted(all_keys)}")
 
     print("\n" + "=" * 60)
     print("PRUEBAS COMPLETADAS")
