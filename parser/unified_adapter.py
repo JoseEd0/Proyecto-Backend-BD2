@@ -9,12 +9,19 @@ Este adaptador integra:
 - Extendible Hashing: Para búsquedas por igualdad muy rápidas
 - R-Tree: Para consultas espaciales (coordenadas geográficas)
 
-SELECCIÓN AUTOMÁTICA:
-- Sequential: Por defecto, bueno para datos pequeños-medianos ordenados
-- BTree: Índices en columnas numéricas con búsquedas frecuentes
-- ISAM: Tablas grandes, principalmente lectura
-- Hash: Búsquedas exactas por clave, no soporta rangos
-- RTree: Datos espaciales (ARRAY[FLOAT] con consultas IN(point, radius))
+SELECCIÓN AUTOMÁTICA (Prioridad cuando NO se especifica USING INDEX):
+1. RTree: Si la clave es ARRAY[FLOAT] o hay consultas espaciales
+2. BTree: Por defecto, búsquedas rápidas y soporte de rangos (mejor opción general)
+3. RTree: Alternativa si BTree no está disponible
+4. ISAM: Si solo están disponibles estructuras estáticas
+5. Sequential: Último recurso si ninguna otra está disponible
+
+ESPECIFICAR ÍNDICE MANUALMENTE:
+- CREATE TABLE ... USING INDEX BTree('columna')
+- CREATE TABLE ... USING INDEX Hash('columna')
+- CREATE TABLE ... USING INDEX RTree('columna')
+- CREATE TABLE ... USING INDEX Isam('columna')
+- CREATE TABLE ... USING INDEX Seq('columna')
 """
 import os
 import sys
@@ -106,6 +113,8 @@ class StructureSelector:
 
         if HAS_BTREE:
             return StructureType.BTREE
+        if HAS_RTREE:
+            return StructureType.RTREE
         if HAS_ISAM:
             return StructureType.ISAM
         if HAS_SEQUENTIAL:
@@ -366,7 +375,22 @@ class UnifiedDatabaseAdapter:
         structure_type = self.table_structures[table_name]
         structure = self.tables[table_name]
         schema = self.table_schemas[table_name]
+        
+        # Verificar si la columna de búsqueda es la clave primaria
+        key_column = next((col for col in schema if col.is_key), None)
+        is_key_search = key_column and key_column.name == column
+        
         try:
+            # Si la búsqueda NO es por clave primaria, hacer scan completo y filtrar
+            if not is_key_search:
+                self._log_operation(f"⚠️  Búsqueda por columna no-clave '{column}', haciendo scan completo")
+                all_rows = self._scan_all_raw(table_name)
+                dict_rows = self._records_to_dicts(table_name, all_rows)
+                raw_results = [r for r in dict_rows if r.get(column) == key]
+                self._log_operation(f"SEARCH {table_name} WHERE {column} = {key} (encontrados: {len(raw_results)})")
+                return raw_results
+            
+            # Si es búsqueda por clave, usar el índice
             if structure_type == StructureType.SEQUENTIAL:
                 result = structure.search(key)
                 raw_results = [result] if result is not None else []
