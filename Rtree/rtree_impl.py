@@ -7,8 +7,6 @@ from typing import List, Tuple, Dict, Any, Optional, Union
 
 
 class Point:
-    """Clase para representar un punto multidimensional"""
-
     def __init__(self, coordinates: List[float], id: Optional[str] = None):
         self.coordinates = coordinates
         self.id = id or str(uuid.uuid4())
@@ -20,18 +18,18 @@ class Point:
     def __repr__(self):
         return self.__str__()
 
-    def distance_to(self, other_point: 'Point') -> float:
-        """Calcula la distancia euclidiana a otro punto"""
+    def distance_to(self, other_point: "Point") -> float:
+        # Calcula la distancia euclidiana a otro punto
         if self.dimension != other_point.dimension:
             raise ValueError("Los puntos deben tener la misma dimensión")
 
-        sum_squares = sum((a - b) ** 2 for a, b in zip(self.coordinates, other_point.coordinates))
+        sum_squares = sum(
+            (a - b) ** 2 for a, b in zip(self.coordinates, other_point.coordinates)
+        )
         return math.sqrt(sum_squares)
 
 
 class SpatialRecord:
-    """Clase para representar un registro con información espacial"""
-
     def __init__(self, id: Union[int, str], location: Point, data: Dict[str, Any]):
         self.id = str(id)
         self.location = location
@@ -40,36 +38,37 @@ class SpatialRecord:
         self.updated_at = None
 
     def __str__(self):
-        return f"SpatialRecord(id={self.id}, location={self.location}, data={self.data})"
+        return (
+            f"SpatialRecord(id={self.id}, location={self.location}, data={self.data})"
+        )
 
     def __repr__(self):
         return self.__str__()
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convierte el registro a diccionario para serialización"""
+        # Convierte el registro a diccionario para serialización
         return {
-            'id': self.id,
-            'location': {
-                'coordinates': self.location.coordinates,
-                'id': self.location.id
+            "id": self.id,
+            "location": {
+                "coordinates": self.location.coordinates,
+                "id": self.location.id,
             },
-            'data': self.data,
-            'created_at': self.created_at,
-            'updated_at': self.updated_at
+            "data": self.data,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'SpatialRecord':
-        """Crea un registro desde un diccionario"""
-        location = Point(data['location']['coordinates'], data['location']['id'])
-        record = cls(data['id'], location, data['data'])
-        record.created_at = data.get('created_at')
-        record.updated_at = data.get('updated_at')
+    def from_dict(cls, data: Dict[str, Any]) -> "SpatialRecord":
+        # Crea un registro desde un diccionario
+        location = Point(data["location"]["coordinates"], data["location"]["id"])
+        record = cls(data["id"], location, data["data"])
+        record.created_at = data.get("created_at")
+        record.updated_at = data.get("updated_at")
         return record
 
 
 class RTreeIndex:
-    """Implementación de R-Tree para indexación espacial multidimensional"""
 
     def __init__(self, file_path: Optional[str] = None, dimension: int = 2):
         self.dimension = dimension
@@ -90,10 +89,9 @@ class RTreeIndex:
 
         self.records: Dict[str, SpatialRecord] = {}
         self._next_id = 0
-        self.load_data(silent=True)  # Silent para evitar errores en tests con temp dirs
+        self.load_data(silent=True)
 
     def _generate_bbox(self, point: Point) -> Tuple[float, ...]:
-        """Genera bounding box para un punto"""
         coords = point.coordinates
         return tuple(coords + coords)
 
@@ -110,7 +108,9 @@ class RTreeIndex:
                 self._next_id += 1
 
             bbox = self._generate_bbox(record.location)
-            self.idx.insert(int(record.id) if record.id.isdigit() else hash(record.id), bbox)
+            self.idx.insert(
+                int(record.id) if record.id.isdigit() else hash(record.id), bbox
+            )
             self.records[record.id] = record
 
             if record.id.isdigit():
@@ -143,7 +143,7 @@ class RTreeIndex:
         return self.records.get(record_id)
 
     def range_search(self, center_point: Point, radius: float) -> List[SpatialRecord]:
-        """Búsqueda por rango dentro de un radio"""
+        # Búsqueda por rango dentro de un radio
         try:
             if center_point.dimension != self.dimension:
                 raise ValueError(f"El punto debe tener dimensión {self.dimension}")
@@ -180,8 +180,10 @@ class RTreeIndex:
             print(f"Error en búsqueda por rango: {e}")
             return []
 
-    def k_nearest_neighbors(self, query_point: Point, k: int) -> List[Tuple[SpatialRecord, float]]:
-        """Encuentra los K vecinos más cercanos"""
+    def k_nearest_neighbors(
+        self, query_point: Point, k: int
+    ) -> List[Tuple[SpatialRecord, float]]:
+        # Encuentra los K vecinos más cercanos
         try:
             if query_point.dimension != self.dimension:
                 raise ValueError(f"El punto debe tener dimensión {self.dimension}")
@@ -215,12 +217,12 @@ class RTreeIndex:
     def save_data(self, silent=False):
         try:
             data_to_save = {
-                'records': {rid: rec.to_dict() for rid, rec in self.records.items()},
-                'next_id': self._next_id,
-                'dimension': self.dimension
+                "records": {rid: rec.to_dict() for rid, rec in self.records.items()},
+                "next_id": self._next_id,
+                "dimension": self.dimension,
             }
 
-            with open(self.data_file, 'w', encoding='utf-8') as f:
+            with open(self.data_file, "w", encoding="utf-8") as f:
                 json.dump(data_to_save, f, indent=2, ensure_ascii=False)
 
         except Exception as e:
@@ -230,16 +232,16 @@ class RTreeIndex:
     def load_data(self, silent=False):
         try:
             if os.path.exists(self.data_file):
-                with open(self.data_file, 'r', encoding='utf-8') as f:
+                with open(self.data_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
                 self.records = {}
-                for rid, rec_data in data.get('records', {}).items():
+                for rid, rec_data in data.get("records", {}).items():
                     record = SpatialRecord.from_dict(rec_data)
                     self.records[rid] = record
 
-                self._next_id = data.get('next_id', 0)
-                self.dimension = data.get('dimension', self.dimension)
+                self._next_id = data.get("next_id", 0)
+                self.dimension = data.get("dimension", self.dimension)
                 self._rebuild_index()
 
         except Exception as e:
@@ -262,15 +264,15 @@ class RTreeIndex:
 
     def get_statistics(self) -> Dict[str, Any]:
         return {
-            'total_records': len(self.records),
-            'dimension': self.dimension,
-            'file_path': self.file_path,
-            'next_id': self._next_id
+            "total_records": len(self.records),
+            "dimension": self.dimension,
+            "file_path": self.file_path,
+            "next_id": self._next_id,
         }
 
     def __del__(self):
         try:
-            self.save_data(silent=True)  # Silent para evitar errores en tests
+            self.save_data(silent=True)
         except:
             pass
 
@@ -279,7 +281,9 @@ def create_point_from_coordinates(coordinates: List[float]) -> Point:
     return Point(coordinates)
 
 
-def create_record(id: Union[int, str], coordinates: List[float], data: Dict[str, Any]) -> SpatialRecord:
+def create_record(
+    id: Union[int, str], coordinates: List[float], data: Dict[str, Any]
+) -> SpatialRecord:
     point = Point(coordinates)
     return SpatialRecord(id, point, data)
 
@@ -288,10 +292,16 @@ if __name__ == "__main__":
     rtree = RTreeIndex("test_rtree", dimension=2)
 
     records = [
-        create_record("1", [10.0, 20.0], {"nombre": "Restaurante A", "tipo": "italiano"}),
-        create_record("2", [15.0, 25.0], {"nombre": "Restaurante B", "tipo": "mexicano"}),
+        create_record(
+            "1", [10.0, 20.0], {"nombre": "Restaurante A", "tipo": "italiano"}
+        ),
+        create_record(
+            "2", [15.0, 25.0], {"nombre": "Restaurante B", "tipo": "mexicano"}
+        ),
         create_record("3", [50.0, 80.0], {"nombre": "Restaurante C", "tipo": "chino"}),
-        create_record("4", [12.0, 22.0], {"nombre": "Restaurante D", "tipo": "peruano"})
+        create_record(
+            "4", [12.0, 22.0], {"nombre": "Restaurante D", "tipo": "peruano"}
+        ),
     ]
 
     for record in records:
