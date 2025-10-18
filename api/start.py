@@ -13,24 +13,24 @@ import os
 
 def install_requirements():
     """Instalar las dependencias necesarias"""
-    print(" Instalando dependencias...")
+    print("📦 Instalando dependencias...")
     try:
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
         )
-        print(" Dependencias instaladas correctamente")
+        print("✅ Dependencias instaladas correctamente")
         return True
     except subprocess.CalledProcessError:
-        print(" Error instalando dependencias")
+        print("❌ Error instalando dependencias")
         return False
 
 
 def start_server():
     """Iniciar el servidor FastAPI"""
-    print("\n Iniciando servidor FastAPI...")
-    print(" Documentación API: http://localhost:8000/docs")
-    print(" Interfaz Web: http://localhost:8000/")
-    print(" Presiona Ctrl+C para detener\n")
+    print("\n🚀 Iniciando servidor FastAPI...")
+    print("📖 Documentación API: http://localhost:8000/docs")
+    print("🌐 Interfaz Web: http://localhost:8000/")
+    print("⏹️  Presiona Ctrl+C para detener\n")
 
     try:
         subprocess.run(
@@ -47,15 +47,15 @@ def start_server():
             ]
         )
     except KeyboardInterrupt:
-        print("\n Servidor detenido por el usuario")
+        print("\n⏹️  Servidor detenido por el usuario")
     except Exception as e:
-        print(f" Error iniciando servidor: {e}")
+        print(f"❌ Error iniciando servidor: {e}")
 
 
 def main():
     """Función principal"""
     print("=" * 60)
-    print("API PARSER SQL - CS2702 UTEC")
+    print("🗄️  API PARSER SQL - CS2702 UTEC")
     print("=" * 60)
 
     # Cambiar al directorio de la API
@@ -67,7 +67,7 @@ def main():
         import fastapi
         import uvicorn
 
-        print("Dependencias ya instaladas")
+        print("✅ Dependencias ya instaladas")
     except ImportError:
         if not install_requirements():
             sys.exit(1)

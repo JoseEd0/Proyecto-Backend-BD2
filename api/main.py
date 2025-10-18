@@ -164,7 +164,7 @@ async def execute_sql_query(query: SQLQuery):
         import traceback
 
         error_trace = traceback.format_exc()
-        print(f"Error inesperado:\n{error_trace}")
+        print(f"❌ Error inesperado:\n{error_trace}")
 
         raise HTTPException(
             status_code=500, detail=f"Error interno del servidor: {str(e)}"
@@ -184,9 +184,9 @@ async def validate_sql_query(query: SQLQuery):
         friendly_errors = []
         for error in errors:
             if "Se esperaba" in error:
-                friendly_errors.append(f" Sintaxis: {error}")
+                friendly_errors.append(f"❌ Sintaxis: {error}")
             elif "no existe" in error:
-                friendly_errors.append(f" {error}")
+                friendly_errors.append(f"⚠️  {error}")
             else:
                 friendly_errors.append(error)
 
@@ -261,11 +261,11 @@ async def get_table_info(table_name: str):
 def get_structure_description(structure: str) -> str:
     """Retorna descripción de la estructura de datos"""
     descriptions = {
-        "sequential": "Sequential File - Datos ordenados, búsquedas O(log n)",
-        "btree": "B+ Tree - Búsquedas rápidas, excelente para rangos",
-        "isam": "ISAM - Óptimo para tablas grandes estáticas",
-        "hash": "Hash - Búsquedas exactas ultra rápidas O(1)",
-        "rtree": "R-Tree - Consultas espaciales optimizadas",
+        "sequential": "✅ Sequential File - Datos ordenados, búsquedas O(log n)",
+        "btree": "⚡ B+ Tree - Búsquedas rápidas, excelente para rangos",
+        "isam": "📚 ISAM - Óptimo para tablas grandes estáticas",
+        "hash": "🚀 Hash - Búsquedas exactas ultra rápidas O(1)",
+        "rtree": "🌍 R-Tree - Consultas espaciales optimizadas",
     }
     return descriptions.get(structure, "Estructura de datos no especificada")
 
@@ -538,8 +538,8 @@ async def not_found_handler(request, exc):
 if __name__ == "__main__":
     import uvicorn
 
-    print("Iniciando API del Parser SQL...")
-    print("Documentación disponible en: http://localhost:8000/docs")
-    print("Frontend disponible en: http://localhost:8000/")
+    print("🚀 Iniciando API del Parser SQL...")
+    print("📖 Documentación disponible en: http://localhost:8000/docs")
+    print("🌐 Frontend disponible en: http://localhost:8000/")
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
