@@ -1,1 +1,1 @@
-{"is_leaf": false, "keys": [1011, 1013], "children": [17, 20, 24], "next_leaf": -1, "size": 2}
+{"is_leaf": false, "keys": [1010], "children": [17, 45], "next_leaf": -1, "size": 1}
