@@ -397,13 +397,20 @@ class UnifiedDatabaseAdapter:
 
             elif structure_type == StructureType.BTREE:
                 result = structure.search(key)
+                raw_results = []
                 if result:
-                    full_record = None
-                    if hasattr(structure, "_data_storage") and isinstance(structure._data_storage, dict):
-                        full_record = structure._data_storage.get(key)
-                    raw_results = [full_record] if full_record else []
-                else:
-                    raw_results = []
+                    # Si el B+Tree almacena el registro completo como referencia, usarlo directamente
+                    if isinstance(result, (list, dict)):
+                        raw_results = [result]
+                    else:
+                        # Si no, intentar obtener el registro desde el almacenamiento en memoria (si existe)
+                        full_record = None
+                        if hasattr(structure, "_data_storage") and isinstance(structure._data_storage, dict):
+                            full_record = structure._data_storage.get(key)
+                        if full_record:
+                            raw_results = [full_record]
+                        else:
+                            raw_results = []
 
             elif structure_type == StructureType.HASH:
                 result = structure.search(str(key))
@@ -437,7 +444,12 @@ class UnifiedDatabaseAdapter:
             elif structure_type == StructureType.BTREE:
                 results = structure.range_search(begin_key, end_key)
                 raw_results = []
-                for key, _ in results:
+                for key, ref in results:
+                    # Preferir la referencia devuelta por el B+Tree si contiene el registro completo
+                    if isinstance(ref, (list, dict)):
+                        raw_results.append(ref)
+                        continue
+                    # Si la referencia no es el registro, intentar obtenerlo desde el almacenamiento en memoria
                     full_record = None
                     if hasattr(structure, "_data_storage") and isinstance(structure._data_storage, dict):
                         full_record = structure._data_storage.get(key)

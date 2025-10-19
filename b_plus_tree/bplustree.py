@@ -128,7 +128,8 @@ class BPlusTree:
             return None
 
         i = 0
-        while i < node.size and node.keys[i] < key:
+        # Avanzar mientras la clave sea mayor o igual al separador
+        while i < node.size and key >= node.keys[i]:
             i += 1
         return self._search_aux(node.children[i], key)
 
@@ -194,7 +195,8 @@ class BPlusTree:
 
         else:
             i = 0
-            while i < node.size and node.keys[i] < key:
+            # Seleccionar el hijo correcto: avanzar mientras la clave sea mayor o igual
+            while i < node.size and key >= node.keys[i]:
                 i += 1
 
             split, new_key, new_pointer = self._insert_aux(node.children[i], key, pointer)
@@ -284,7 +286,8 @@ class BPlusTree:
             return node_id
 
         i = 0
-        while i < node.size and node.keys[i] < key:
+        # Para búsqueda en árbol: si la clave es >= separador, bajar a la derecha
+        while i < node.size and key >= node.keys[i]:
             i += 1
         return self._find_leaf_id(node.children[i], key)
 
