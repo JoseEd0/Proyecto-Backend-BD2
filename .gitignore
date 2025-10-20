@@ -1,0 +1,84 @@
+// ...existing code...
+# Sistema operativo
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+# no ignores de lockfiles (package-lock.json, yarn.lock, pnpm-lock.yaml)
+
+# Entornos virtuales / Python
+venv/
+.env/
+.env
+.env.*.local
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Java / Maven / Gradle
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Build / distribución
+dist/
+build/
+out/
+*.tgz
+
+# Cobertura / pruebas
+coverage/
+.nyc_output/
+
+# Bases de datos y archivos locales
+*.sqlite3
+*.db
+*.sql
+*.bak
+
+# Logs y runtime
+logs/
+*.log
+pids/
+*.pid
+*.seed
+*.pid.lock
+*.sock
+
+# Contenedores
+docker-compose.override.yml
+.env.docker
+
+# Certificados / claves
+*.pem
+*.key
+*.p12
+*.crt
+
+# IDE / editores
+.vscode/
+.idea/
+*.iml
+*.sublime-workspace
+*.sublime-project
+
+# Otros
+.cache/
+.tmp/
+.history/
+.DS_Store
+# ...existing code...
