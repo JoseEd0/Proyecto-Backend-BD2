@@ -6,28 +6,47 @@ LEAF_BLOCK_FACTOR = 3
 ROOT_BLOCK_FACTOR = 3
 
 class Record:
-    FORMAT = 'i'
+    FORMAT = 'i20s10sf'
     SIZE_OF_RECORD = struct.calcsize(FORMAT)
-    def __init__(self, id_: int):
+
+    def __init__(self, id_: int, nombre: str, fecha: str, rating: float):
         self.id = id_
+        self.nombre = nombre
+        self.fecha = fecha
+        self.rating = float(rating)
+
     def pack(self) -> bytes:
-        return struct.pack(self.FORMAT, self.id)
+        return struct.pack(
+            self.FORMAT,
+            self.id,
+            self.nombre[:20].ljust(20).encode(),
+            self.fecha[:10].ljust(10).encode(),
+            self.rating
+        )
+
     @staticmethod
     def unpack(data: bytes):
-        (id_,) = struct.unpack(Record.FORMAT, data)
-        return Record(id_)
+        id_, nbytes, fbytes, rating = struct.unpack(Record.FORMAT, data)
+        nombre = nbytes.decode().rstrip('\x00').rstrip()
+        fecha = fbytes.decode().rstrip('\x00').rstrip()
+        return Record(id_, nombre, fecha, rating)
+
     def __repr__(self):
-        return f"Record(id={self.id})"
+        return f"Record(id={self.id}, nombre='{self.nombre}', fecha='{self.fecha}', rating={self.rating:.1f})"
+
 
 class DataPage:
     HEADER_FORMAT = 'ii'
     HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
     SIZE_OF_PAGE = HEADER_SIZE + BLOCK_FACTOR * Record.SIZE_OF_RECORD
+
     def __init__(self, records=None, next_page=-1):
         self.records = list(records) if records else []
         self.next_page = next_page
+
     def has_space(self):
         return len(self.records) < BLOCK_FACTOR
+
     def pack(self) -> bytes:
         header_data = struct.pack(self.HEADER_FORMAT, len(self.records), self.next_page)
         records_data = b''.join(r.pack() for r in self.records)
@@ -35,6 +54,7 @@ class DataPage:
         if pad > 0:
             records_data += b'\x00' * (pad * Record.SIZE_OF_RECORD)
         return header_data + records_data
+
     @staticmethod
     def unpack(data: bytes):
         size, next_page = struct.unpack(DataPage.HEADER_FORMAT, data[:DataPage.HEADER_SIZE])
@@ -46,9 +66,11 @@ class DataPage:
             offset += Record.SIZE_OF_RECORD
         return DataPage(records, next_page)
 
+
 class ISAMFile:
     INDEX_ENTRY_FMT = 'ii'
     INDEX_ENTRY_SIZE = struct.calcsize(INDEX_ENTRY_FMT)
+
     def __init__(self, filename):
         self.filename = filename
         self.filename_idx = filename + '_idx'
@@ -318,43 +340,25 @@ class ISAMFile:
                 self._write_page(f, ov, op)
                 ov = op.next_page
         return removed
-
     def scanAll(self):
         if not os.path.exists(self.filename):
             print("(Archivo vacío)")
             return
         total = self._total_pages()
         with open(self.filename, 'rb') as f:
+            print("==== PÁGINAS DE DATOS ====")
             for pno in range(total):
                 page = self._read_page(f, pno)
-                print(f"Página {pno} [size={len(page.records)}, next={page.next_page}]")
+                print(f"\nPágina {pno} [size={len(page.records)}, next={page.next_page}]")
                 for r in page.records:
                     print(f"  - {r}")
         self._load_index()
-        print("==== LEAF ====")
+        print("\n==== ÍNDICE LEAF ====")
         for mx, pno in self.leaf:
-            print(f"  ({mx} -> {pno})")
-        print("==== ROOT ====")
+            print(f"  ({mx} → pág {pno})")
+        print("\n==== ÍNDICE ROOT ====")
         for mx, start in self.root:
-            print(f"  ({mx} -> {start})")
-        print("==== SUPER ROOT ====")
+            print(f"  ({mx} → leaf_idx {start})")
+        print("\n==== ÍNDICE SUPER ROOT ====")
         for mx, start in self.super_root:
-            print(f"  ({mx} -> {start})")
-
-if __name__ == "__main__":
-    for fn in ["isam3_data.dat", "isam3_data.dat_idx"]:
-        try: os.remove(fn)
-        except: pass
-    isam = ISAMFile("isam3_data.dat")
-    base = [Record(i) for i in [101,105,108,110,112,115,118,120,122,125,128,130,133,136,139,142,145,147,149,150]]
-    isam.build_from_records(base)
-    print("== Estructura inicial ==")
-    isam.scanAll()
-    print("\nInsertando...")
-    for x in [111,113,114,151,152,153]:
-        isam.add(Record(x))
-    isam.scanAll()
-    print("\nsearch(112) ->", isam.search(112))
-    print("range_search [110, 130] ->", isam.range_search(110,130))
-    print("\nremove(111) -> removidos:", isam.remove(111))
-    isam.scanAll()
+            print(f"  ({mx} → root_idx {start})")
