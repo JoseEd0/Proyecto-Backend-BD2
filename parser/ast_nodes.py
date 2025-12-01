@@ -18,6 +18,7 @@ class IndexType(Enum):
     ISAM = "ISAM"
     HASH = "Hash"
     RTREE = "RTree"
+    BOW = "BOW"
 
 
 class DataType(Enum):
