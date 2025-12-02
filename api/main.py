@@ -742,19 +742,20 @@ async def search_similar_images(file: UploadFile = File(...), k: int = Form(10))
         results = []
         for pos, similarity in similar_data:
             record = sift_image_manager.HEAP.read(pos)
-            results.append(
-                {
-                    "id": record[0],
-                    "nombre": (
-                        record[1].strip()
-                        if isinstance(record[1], str)
-                        else record[1].decode("utf-8").strip()
-                    ),
-                    "similarity": float(similarity),
-                    "position": pos,
-                }
-            )
+            image_info = {
+                "id": record[0],
+                "nombre": (
+                    record[1].strip()
+                    if isinstance(record[1], str)
+                    else record[1].decode("utf-8").strip()
+                ),
+                "similarity": float(similarity),
+                "position": pos,
+            }
+            print(f"[DEBUG] Image result: {image_info}")  # Debug log
+            results.append(image_info)
 
+        print(f"[DEBUG] Total results: {len(results)}")  # Debug log
         return {
             "success": True,
             "results": results,
@@ -910,13 +911,52 @@ async def get_image_file(image_id: int):
 # ==================== FIN ENDPOINTS SIFT ====================
 
 
-# Montar archivos estáticos
+# Montar archivos estáticos del build de React
 static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+dist_dir = os.path.join(static_dir, "dist")
+
+# Servir el build de React
+if os.path.exists(dist_dir):
+    app.mount(
+        "/assets",
+        StaticFiles(directory=os.path.join(dist_dir, "assets")),
+        name="assets",
+    )
 
 
-# Manejar errores 404 para rutas no encontradas
+@app.get("/")
+async def read_root():
+    """Servir la aplicación React"""
+    dist_index = os.path.join(os.path.dirname(__file__), "static", "dist", "index.html")
+
+    if os.path.exists(dist_index):
+        return FileResponse(dist_index)
+    else:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "Frontend not found. Please run 'npm run build' in the frontend directory."
+            },
+        )
+
+
+# Catch-all route para React Router (debe ir al final)
+@app.get("/{full_path:path}")
+async def serve_react_app(full_path: str):
+    """Servir la aplicación React para todas las rutas no API"""
+    # Si es una ruta API, dejar que FastAPI maneje el 404
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+
+    # Servir el index.html de React para client-side routing
+    dist_index = os.path.join(os.path.dirname(__file__), "static", "dist", "index.html")
+    if os.path.exists(dist_index):
+        return FileResponse(dist_index)
+
+    raise HTTPException(status_code=404, detail="Route not found")
+
+
+# Manejar errores 404 para rutas API no encontradas
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
     return JSONResponse(
