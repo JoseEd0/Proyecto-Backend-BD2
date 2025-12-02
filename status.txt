@@ -1,7 +1,0 @@
-Table structure: bow
-HAS_BOW: True
-Inserted doc 1
-Inserted doc 2
-Inserted doc 3
-Inserted doc 4
-Inserted doc 5

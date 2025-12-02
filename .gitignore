@@ -8,7 +8,7 @@ __pycache__/
 dist/
 build/
 *.egg
-api/nltk_data/
+api/nltk_data
 # Entornos virtuales
 venv/
 env/
@@ -31,6 +31,16 @@ ENV/
 *.heap
 *.dat
 *.idx
+*.npz
+*.pkl
+*.npy
+
+# SIFT - Archivos grandes generados
+SIFT_struct/descriptors
+SIFT_struct/test_images
+SIFT_struct/test_images_reescaladas
+SIFT_struct/query_images
+sift/
 
 # Logs
 *.log
@@ -51,6 +61,7 @@ htmlcov/
 .coverage.*
 coverage.xml
 *.cover
+api/nltk_data
 
 # mypy
 .mypy_cache/

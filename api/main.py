@@ -26,8 +26,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 try:
     from parser import create_sql_parser_engine
     from parser.unified_adapter import UnifiedDatabaseAdapter
-    from SIFT_struct.InvertVisualFile import MultimediaImageRetrieval
+    from SIFT_struct.SIFTEngine import SIFTEngine, SIFTConfig
     from Heap_struct.Heap import Heap
+    from inverted_index.indexer import SPIMIIndexer
+    from inverted_index.query_engine import QueryEngine
+    from inverted_index.preprocessing import TextPreprocessor
 except ImportError as e:
     print(f"Error importando parser: {e}")
     raise
@@ -59,6 +62,13 @@ sql_engine = create_sql_parser_engine(database_adapter=database_adapter)
 
 # Gestor de imágenes SIFT
 sift_image_manager = None  # Se inicializará cuando se cree una tabla de imágenes
+
+# Gestor de BOW (Bag of Words)
+bow_indexer = None  # SPIMIIndexer para crear índices
+bow_query_engine = None  # QueryEngine para búsquedas
+bow_preprocessor = TextPreprocessor(language="spanish")
+BOW_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "bow")
+os.makedirs(BOW_DATA_DIR, exist_ok=True)
 
 # Directorio para almacenar imágenes subidas
 IMAGES_DIR = os.path.join(os.path.dirname(__file__), "data", "sift", "uploaded_images")
@@ -543,30 +553,23 @@ async def create_sift_table(table_name: str = "ImagenesMultimedia"):
     global sift_image_manager
 
     try:
-        # Formato de la tabla: id, nombre, ruta
-        table_format = {"id": "i", "nombre": "100s", "ruta": "200s"}
-
         # Rutas de archivos
         base_dir = os.path.join(os.path.dirname(__file__), "..")
-        data_file = os.path.join("data", "sift", f"{table_name}.heap")
-        index_file = os.path.join("data", "sift", f"{table_name}_index.heap")
 
-        # Crear directorio si no existe
-        os.makedirs(
-            os.path.join(os.path.dirname(__file__), "data", "sift"), exist_ok=True
+        # Configuración optimizada
+        config = SIFTConfig(
+            image_size=512,
+            use_root_sift=True,
+            min_images_for_vocab=10,
+            use_inverted_index=True,
         )
 
-        # Inicializar el gestor de imágenes SIFT
-        sift_image_manager = MultimediaImageRetrieval(
-            table_format=table_format,
-            key="id",
-            data_file_name=data_file,
-            index_file_name=index_file,
+        # Inicializar el motor SIFT
+        sift_image_manager = SIFTEngine(
             base_dir=base_dir,
-            z=256,
-            n_clusters=100,
+            data_dir="api/data/sift",
+            config=config,
             force_create=True,
-            ruta_col_name="ruta",
         )
 
         return {
@@ -574,7 +577,11 @@ async def create_sift_table(table_name: str = "ImagenesMultimedia"):
             "message": f"Tabla '{table_name}' creada exitosamente con índice SIFT",
             "table_name": table_name,
             "columns": ["id", "nombre", "ruta"],
-            "sift_config": {"image_size": 256, "clusters": 100},
+            "sift_config": {
+                "image_size": config.image_size,
+                "min_images_for_vocab": config.min_images_for_vocab,
+                "use_inverted_index": config.use_inverted_index,
+            },
         }
 
     except Exception as e:
@@ -592,36 +599,31 @@ async def upload_image(
     """Subir una imagen y agregarla al índice SIFT"""
     global sift_image_manager
 
-    # Auto-crear tabla si no existe
+    # Auto-crear motor si no existe
     if sift_image_manager is None:
         try:
-            print("[SIFT] Creando tabla por primera vez...")
-            table_format = {"id": "i", "nombre": "100s", "ruta": "200s"}
+            print("[SIFT] Creando motor por primera vez...")
             base_dir = os.path.join(os.path.dirname(__file__), "..")
-            data_file = os.path.join("data", "sift", "images.heap")
-            index_file = os.path.join("data", "sift", "images_index.heap")
 
-            os.makedirs(
-                os.path.join(os.path.dirname(__file__), "data", "sift"), exist_ok=True
+            config = SIFTConfig(
+                image_size=512,
+                use_root_sift=True,
+                min_images_for_vocab=10,
+                use_inverted_index=True,
             )
 
-            sift_image_manager = MultimediaImageRetrieval(
-                table_format=table_format,
-                key="id",
-                data_file_name=data_file,
-                index_file_name=index_file,
+            sift_image_manager = SIFTEngine(
                 base_dir=base_dir,
-                z=256,
-                n_clusters=50,  # Reducido de 100 a 50 para más velocidad
-                force_create=True,
-                ruta_col_name="ruta",
+                data_dir="api/data/sift",
+                config=config,
+                force_create=False,
             )
-            print("[SIFT] Tabla creada exitosamente")
+            print("[SIFT] Motor creado exitosamente")
         except Exception as e:
             print(f"[SIFT ERROR] {str(e)}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Error creando tabla automáticamente: {str(e)}",
+                detail=f"Error creando motor SIFT: {str(e)}",
             )
 
     try:
@@ -636,9 +638,9 @@ async def upload_image(
 
         # Auto-generar ID si no se proporciona
         if image_id is None:
-            all_records = sift_image_manager.HEAP.scan_all()
-            if all_records:
-                max_id = max(record[0] for record in all_records)
+            all_images = sift_image_manager.get_all_images()
+            if all_images:
+                max_id = max(img["id"] for img in all_images)
                 image_id = max_id + 1
             else:
                 image_id = 1
@@ -655,45 +657,40 @@ async def upload_image(
         image_path = os.path.join(IMAGES_DIR, image_filename)
 
         # Guardar el archivo
-        print(f"[SIFT] Guardando archivo en disco...")
+        print("[SIFT] Guardando archivo en disco...")
         with open(image_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Ruta relativa para almacenar en la BD
-        relative_path = os.path.join(
-            "api", "data", "sift", "uploaded_images", image_filename
-        )
+        # Agregar al índice SIFT
+        print("[SIFT] Extrayendo descriptores SIFT y actualizando índice...")
+        result = sift_image_manager.add_image(image_id, image_name, image_path)
 
-        # Insertar registro en el heap principal
-        print(f"[SIFT] Insertando en heap principal...")
-        pos = sift_image_manager.HEAP.insert([image_id, image_name, relative_path])
-
-        # Agregar al índice SIFT (esto puede tomar tiempo)
-        print(f"[SIFT] Extrayendo descriptores SIFT y actualizando índice...")
-        insert_result = sift_image_manager.insert(pos)
+        if not result["success"]:
+            # Limpiar archivo si hay error
+            if os.path.exists(image_path):
+                os.remove(image_path)
+            raise HTTPException(
+                status_code=400, detail=result.get("error", "Error desconocido")
+            )
 
         # Construir mensaje según el resultado
-        if insert_result["has_vocabulary"]:
+        if result.get("has_vocabulary"):
             message = "Imagen subida e indexada exitosamente con TF-IDF"
-            print(f"[SIFT] ✓ Imagen indexada con vocabulario (ID: {image_id})")
+            print(f"[SIFT] ✓ Imagen indexada (ID: {image_id})")
         else:
-            images_count = insert_result.get("images_count", 0)
-            message = (
-                f"Imagen guardada. Vocabulario pendiente ({images_count}/10 imágenes)"
-            )
-            print(
-                f"[SIFT] ✓ Imagen guardada sin vocabulario aún (ID: {image_id}, {images_count}/10)"
-            )
+            images_needed = result.get("images_needed", 0)
+            message = f"Imagen guardada. Vocabulario pendiente (faltan {images_needed} imágenes)"
+            print(f"[SIFT] ✓ Imagen guardada, vocabulario pendiente (ID: {image_id})")
 
         return {
             "success": True,
             "message": message,
             "image_id": image_id,
             "image_name": image_name,
-            "position": pos,
+            "position": result.get("position"),
             "path": image_path,
-            "has_vocabulary": insert_result["has_vocabulary"],
-            "images_count": insert_result.get("images_count", None),
+            "has_vocabulary": result.get("has_vocabulary", False),
+            "descriptors": result.get("descriptors", 0),
         }
 
     except HTTPException:
@@ -710,12 +707,14 @@ async def upload_image(
 
 
 @app.post("/api/sift/search-similar")
-async def search_similar_images(file: UploadFile = File(...), k: int = Form(10)):
+async def search_similar_images(
+    file: UploadFile = File(...), k: int = Form(10), use_inverted: bool = Form(True)
+):
     """Buscar las k imágenes más similares a una imagen query"""
     global sift_image_manager
 
     if sift_image_manager is None:
-        raise HTTPException(status_code=400, detail="No hay tabla de imágenes creada")
+        raise HTTPException(status_code=400, detail="No hay motor SIFT inicializado")
 
     query_temp_path = None
     try:
@@ -733,34 +732,30 @@ async def search_similar_images(file: UploadFile = File(...), k: int = Form(10))
         with open(query_temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Realizar búsqueda KNN usando la ruta temporal
-        similar_data = sift_image_manager.knn_search_with_similarity(
-            query_temp_path, k=k
+        # Realizar búsqueda KNN
+        similar_data = sift_image_manager.search(
+            query_temp_path, k=k, use_inverted=use_inverted
         )
 
-        # Obtener información de las imágenes similares
+        # Formatear resultados
         results = []
-        for pos, similarity in similar_data:
-            record = sift_image_manager.HEAP.read(pos)
+        for pos, similarity, info in similar_data:
             image_info = {
-                "id": record[0],
-                "nombre": (
-                    record[1].strip()
-                    if isinstance(record[1], str)
-                    else record[1].decode("utf-8").strip()
-                ),
+                "id": info.get("id", pos),
+                "nombre": info.get("nombre", f"image_{pos}"),
                 "similarity": float(similarity),
                 "position": pos,
             }
-            print(f"[DEBUG] Image result: {image_info}")  # Debug log
+            print(f"[DEBUG] Image result: {image_info}")
             results.append(image_info)
 
-        print(f"[DEBUG] Total results: {len(results)}")  # Debug log
+        print(f"[DEBUG] Total results: {len(results)}")
         return {
             "success": True,
             "results": results,
             "count": len(results),
             "k_requested": k,
+            "search_method": "inverted_index" if use_inverted else "sequential",
         }
 
     except HTTPException:
@@ -774,7 +769,7 @@ async def search_similar_images(file: UploadFile = File(...), k: int = Form(10))
         if query_temp_path and os.path.exists(query_temp_path):
             try:
                 os.remove(query_temp_path)
-            except:
+            except Exception:
                 pass
 
 
@@ -788,37 +783,22 @@ async def list_all_images():
             "success": True,
             "images": [],
             "count": 0,
-            "message": "No hay tabla de imágenes creada",
+            "message": "No hay motor SIFT inicializado",
         }
 
     try:
-        all_records = sift_image_manager.HEAP.scan_all()
-
-        images = []
-        for i, record in enumerate(all_records):
-            images.append(
-                {
-                    "id": record[0],
-                    "nombre": (
-                        record[1].strip()
-                        if isinstance(record[1], str)
-                        else record[1].decode("utf-8").strip()
-                    ),
-                    "ruta": (
-                        record[2].strip()
-                        if isinstance(record[2], str)
-                        else record[2].decode("utf-8").strip()
-                    ),
-                    "position": i,
-                }
-            )
+        images = sift_image_manager.get_all_images()
 
         return {"success": True, "images": images, "count": len(images)}
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error listando imágenes: {str(e)}"
-        )
+        print(f"[ERROR] Error listando imágenes: {str(e)}")
+        return {
+            "success": True,
+            "images": [],
+            "count": 0,
+            "message": f"Error cargando imágenes: {str(e)}",
+        }
 
 
 @app.get("/api/sift/image/{image_id}")
@@ -827,29 +807,16 @@ async def get_image_by_id(image_id: int):
     global sift_image_manager
 
     if sift_image_manager is None:
-        raise HTTPException(status_code=400, detail="No hay tabla de imágenes creada")
+        raise HTTPException(status_code=400, detail="No hay motor SIFT inicializado")
 
     try:
-        all_records = sift_image_manager.HEAP.scan_all()
+        images = sift_image_manager.get_all_images()
 
-        for i, record in enumerate(all_records):
-            if record[0] == image_id:
+        for img in images:
+            if img["id"] == image_id:
                 return {
                     "success": True,
-                    "image": {
-                        "id": record[0],
-                        "nombre": (
-                            record[1].strip()
-                            if isinstance(record[1], str)
-                            else record[1].decode("utf-8").strip()
-                        ),
-                        "ruta": (
-                            record[2].strip()
-                            if isinstance(record[2], str)
-                            else record[2].decode("utf-8").strip()
-                        ),
-                        "position": i,
-                    },
+                    "image": img,
                 }
 
         raise HTTPException(
@@ -870,20 +837,15 @@ async def get_image_file(image_id: int):
     global sift_image_manager
 
     if sift_image_manager is None:
-        raise HTTPException(status_code=400, detail="No hay tabla de imágenes creada")
+        raise HTTPException(status_code=400, detail="No hay motor SIFT inicializado")
 
     try:
-        # Buscar la imagen por ID
-        all_records = sift_image_manager.HEAP.scan_all()
+        images = sift_image_manager.get_all_images()
         image_path = None
 
-        for record in all_records:
-            if record[0] == image_id:
-                ruta = (
-                    record[2].strip()
-                    if isinstance(record[2], str)
-                    else record[2].decode("utf-8").strip()
-                )
+        for img in images:
+            if img["id"] == image_id:
+                ruta = img["ruta"]
                 # Convertir ruta relativa a absoluta
                 image_path = os.path.join(os.path.dirname(__file__), "..", ruta)
                 break
@@ -908,7 +870,321 @@ async def get_image_file(image_id: int):
         )
 
 
+@app.get("/api/sift/stats")
+async def get_sift_stats():
+    """Obtener estadísticas del índice SIFT"""
+    global sift_image_manager
+
+    if sift_image_manager is None:
+        return {"success": False, "message": "No hay motor SIFT inicializado"}
+
+    try:
+        stats = sift_image_manager.get_stats()
+        return {"success": True, "stats": stats}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo estadísticas: {str(e)}"
+        )
+
+
+@app.post("/api/sift/rebuild")
+async def rebuild_sift_index():
+    """Reconstruir el índice SIFT completo"""
+    global sift_image_manager
+
+    if sift_image_manager is None:
+        raise HTTPException(status_code=400, detail="No hay motor SIFT inicializado")
+
+    try:
+        result = sift_image_manager.rebuild_index()
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error reconstruyendo índice: {str(e)}"
+        )
+
+
 # ==================== FIN ENDPOINTS SIFT ====================
+
+
+# ==================== ENDPOINTS PARA BOW (BAG OF WORDS) ====================
+
+
+@app.post("/api/bow/create-index")
+async def create_bow_index(collection_name: str = "bow_collection"):
+    """Crear un índice BOW nuevo"""
+    global bow_indexer, bow_query_engine
+
+    try:
+        # Crear directorio específico para esta colección
+        index_dir = os.path.join(BOW_DATA_DIR, collection_name)
+        os.makedirs(index_dir, exist_ok=True)
+
+        # Inicializar indexer
+        bow_indexer = SPIMIIndexer(block_size_limit=10000, output_dir=index_dir)
+
+        return {
+            "success": True,
+            "message": f"Índice BOW '{collection_name}' creado exitosamente",
+            "collection_name": collection_name,
+            "index_dir": index_dir,
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error creando índice BOW: {str(e)}"
+        )
+
+
+@app.post("/api/bow/upload-documents")
+async def upload_documents(
+    files: List[UploadFile] = File(...), collection_name: str = Form("bow_collection")
+):
+    """Subir múltiples documentos de texto y agregarlos al índice BOW"""
+    global bow_indexer, bow_query_engine
+
+    try:
+        # Crear o cargar índice si no existe
+        index_dir = os.path.join(BOW_DATA_DIR, collection_name)
+
+        if bow_indexer is None:
+            os.makedirs(index_dir, exist_ok=True)
+            bow_indexer = SPIMIIndexer(block_size_limit=10000, output_dir=index_dir)
+
+        processed_docs = []
+        errors = []
+
+        for idx, file in enumerate(files):
+            try:
+                # Validar que sea archivo de texto
+                if not file.filename.endswith((".txt", ".text")):
+                    errors.append(f"{file.filename}: Solo se aceptan archivos .txt")
+                    continue
+
+                # Leer contenido
+                content = await file.read()
+                text = content.decode("utf-8")
+
+                # Preprocesar texto
+                tokens = bow_preprocessor.preprocess(text)
+
+                if not tokens:
+                    errors.append(f"{file.filename}: No se encontraron tokens válidos")
+                    continue
+
+                # Agregar documento al índice
+                doc_id = idx + 1
+                bow_indexer.add_document(doc_id, tokens)
+
+                processed_docs.append(
+                    {
+                        "doc_id": doc_id,
+                        "filename": file.filename,
+                        "tokens_count": len(tokens),
+                    }
+                )
+
+            except Exception as e:
+                errors.append(f"{file.filename}: {str(e)}")
+
+        # Escribir último bloque si existe
+        if bow_indexer.dictionary:
+            bow_indexer.write_block_to_disk()
+
+        return {
+            "success": True,
+            "message": f"Documentos procesados: {len(processed_docs)}",
+            "collection_name": collection_name,
+            "processed_documents": processed_docs,
+            "errors": errors,
+            "total_blocks": bow_indexer.block_count,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error subiendo documentos: {str(e)}"
+        )
+
+
+@app.post("/api/bow/build-index")
+async def build_bow_index(
+    collection_name: str = Form("bow_collection"), total_docs: int = Form(...)
+):
+    """Construir el índice final: merge blocks + TF-IDF"""
+    global bow_indexer, bow_query_engine
+
+    try:
+        index_dir = os.path.join(BOW_DATA_DIR, collection_name)
+
+        if not os.path.exists(index_dir):
+            raise HTTPException(
+                status_code=404, detail=f"Colección '{collection_name}' no encontrada"
+            )
+
+        # Si el indexer no está cargado, necesitamos recrearlo para merge
+        if bow_indexer is None or bow_indexer.output_dir != index_dir:
+            bow_indexer = SPIMIIndexer(block_size_limit=10000, output_dir=index_dir)
+            # Contar bloques existentes
+            block_files = [f for f in os.listdir(index_dir) if f.startswith("block_")]
+            bow_indexer.block_count = len(block_files)
+
+        # Merge blocks
+        bow_indexer.merge_blocks()
+
+        # Compute TF-IDF
+        bow_indexer.compute_tfidf_and_norms(total_docs)
+
+        # Inicializar query engine
+        bow_query_engine = QueryEngine(index_dir=index_dir)
+
+        return {
+            "success": True,
+            "message": "Índice construido exitosamente con TF-IDF",
+            "collection_name": collection_name,
+            "total_documents": total_docs,
+            "vocabulary_size": len(bow_query_engine.vocabulary),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error construyendo índice: {str(e)}"
+        )
+
+
+@app.post("/api/bow/search")
+async def search_bow(
+    query: str = Form(...),
+    k: int = Form(10),
+    collection_name: str = Form("bow_collection"),
+):
+    """Buscar documentos similares a una consulta usando BOW + TF-IDF"""
+    global bow_query_engine
+
+    try:
+        index_dir = os.path.join(BOW_DATA_DIR, collection_name)
+
+        # Cargar query engine si no está cargado
+        if bow_query_engine is None or bow_query_engine.index_dir != index_dir:
+            if not os.path.exists(os.path.join(index_dir, "tfidf_index.dat")):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Índice '{collection_name}' no encontrado. Primero suba documentos y construya el índice.",
+                )
+            bow_query_engine = QueryEngine(index_dir=index_dir)
+
+        # Realizar búsqueda
+        results = bow_query_engine.search(query, k=k)
+
+        # Formatear resultados
+        formatted_results = [
+            {
+                "doc_id": doc_id,
+                "score": float(score),
+                "similarity_percentage": round(score * 100, 2),
+            }
+            for doc_id, score in results
+        ]
+
+        return {
+            "success": True,
+            "query": query,
+            "results": formatted_results,
+            "count": len(formatted_results),
+            "k_requested": k,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en búsqueda: {str(e)}")
+
+
+@app.get("/api/bow/collections")
+async def list_bow_collections():
+    """Listar todas las colecciones BOW disponibles"""
+    try:
+        if not os.path.exists(BOW_DATA_DIR):
+            return {"success": True, "collections": [], "count": 0}
+
+        collections = []
+        for item in os.listdir(BOW_DATA_DIR):
+            item_path = os.path.join(BOW_DATA_DIR, item)
+            if os.path.isdir(item_path):
+                # Verificar si tiene índice construido
+                has_index = os.path.exists(os.path.join(item_path, "tfidf_index.dat"))
+
+                # Contar documentos si existe el índice
+                doc_count = 0
+                vocab_size = 0
+
+                if has_index:
+                    norms_file = os.path.join(item_path, "doc_norms.dat")
+                    if os.path.exists(norms_file):
+                        with open(norms_file, "rb") as f:
+                            doc_norms = pickle.load(f)
+                            doc_count = len(doc_norms)
+
+                    # Contar vocabulario
+                    temp_engine = QueryEngine(index_dir=item_path)
+                    vocab_size = len(temp_engine.vocabulary)
+
+                collections.append(
+                    {
+                        "name": item,
+                        "has_index": has_index,
+                        "documents_count": doc_count,
+                        "vocabulary_size": vocab_size,
+                    }
+                )
+
+        return {"success": True, "collections": collections, "count": len(collections)}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error listando colecciones: {str(e)}"
+        )
+
+
+@app.delete("/api/bow/collection/{collection_name}")
+async def delete_bow_collection(collection_name: str):
+    """Eliminar una colección BOW completa"""
+    global bow_indexer, bow_query_engine
+
+    try:
+        index_dir = os.path.join(BOW_DATA_DIR, collection_name)
+
+        if not os.path.exists(index_dir):
+            raise HTTPException(
+                status_code=404, detail=f"Colección '{collection_name}' no encontrada"
+            )
+
+        # Limpiar referencias globales si es la colección activa
+        if bow_indexer and bow_indexer.output_dir == index_dir:
+            bow_indexer = None
+        if bow_query_engine and bow_query_engine.index_dir == index_dir:
+            bow_query_engine = None
+
+        # Eliminar directorio
+        shutil.rmtree(index_dir)
+
+        return {
+            "success": True,
+            "message": f"Colección '{collection_name}' eliminada exitosamente",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error eliminando colección: {str(e)}"
+        )
+
+
+# ==================== FIN ENDPOINTS BOW ====================
 
 
 # Montar archivos estáticos del build de React

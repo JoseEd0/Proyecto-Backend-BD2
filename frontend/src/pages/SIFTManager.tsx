@@ -33,6 +33,7 @@ export default function SIFTManager() {
   const [kValue, setKValue] = useState(10);
   const [searchResults, setSearchResults] = useState<any[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [imageTimestamp, setImageTimestamp] = useState(Date.now());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,6 +62,7 @@ export default function SIFTManager() {
           });
         console.log("Mapped images:", mappedImages); // Debug
         setImages(mappedImages);
+        setImageTimestamp(Date.now()); // Actualizar timestamp para forzar recarga
       } else {
         console.error("Invalid response format:", data);
         setImages([]);
@@ -371,8 +373,15 @@ export default function SIFTManager() {
                 {searchResults.map((result, idx) => (
                   <div key={idx} className="result-item">
                     <img
-                      src={`/api/sift/image-file/${result.id}`}
+                      src={`/api/sift/image-file/${result.id}?t=${imageTimestamp}`}
                       alt={result.nombre || "Resultado"}
+                      onError={(e) => {
+                        console.error(
+                          `Error loading result image ${result.id}`
+                        );
+                        e.currentTarget.src =
+                          'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><text x="50%" y="50%" text-anchor="middle">Error</text></svg>';
+                      }}
                     />
                     <div className="result-info">
                       <span className="result-name">
@@ -405,9 +414,13 @@ export default function SIFTManager() {
               images.map((image) => (
                 <div key={image.id} className="gallery-item">
                   <img
-                    src={`/api/sift/image-file/${image.id}`}
+                    src={`/api/sift/image-file/${image.id}?t=${imageTimestamp}`}
                     alt={image.name}
                     loading="lazy"
+                    onError={(e) => {
+                      console.error(`Error loading image ${image.id}`);
+                      e.currentTarget.style.display = "none";
+                    }}
                   />
                   <div className="gallery-info">
                     <span>{image.name}</span>
