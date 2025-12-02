@@ -6,7 +6,7 @@ API REST que expone las funcionalidades del parser SQL
 para ser consumidas desde el frontend.
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -17,6 +17,8 @@ import os
 import time
 import csv
 import io
+import shutil
+from pathlib import Path
 
 # Agregar el parser al path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -24,6 +26,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 try:
     from parser import create_sql_parser_engine
     from parser.unified_adapter import UnifiedDatabaseAdapter
+    from SIFT_struct.InvertVisualFile import MultimediaImageRetrieval
+    from Heap_struct.Heap import Heap
 except ImportError as e:
     print(f"Error importando parser: {e}")
     raise
@@ -52,6 +56,13 @@ database_adapter = UnifiedDatabaseAdapter(data_dir="data")
 
 # Motor del parser SQL global con todas las estructuras
 sql_engine = create_sql_parser_engine(database_adapter=database_adapter)
+
+# Gestor de imágenes SIFT
+sift_image_manager = None  # Se inicializará cuando se cree una tabla de imágenes
+
+# Directorio para almacenar imágenes subidas
+IMAGES_DIR = os.path.join(os.path.dirname(__file__), "data", "sift", "uploaded_images")
+os.makedirs(IMAGES_DIR, exist_ok=True)
 
 
 # Modelos Pydantic para las requests/responses
@@ -523,6 +534,382 @@ async def get_table_data(table_name: str, limit: int = 100):
         )
 
 
+# ==================== ENDPOINTS PARA SIFT (BÚSQUEDA DE IMÁGENES) ====================
+
+
+@app.post("/api/sift/create-table")
+async def create_sift_table(table_name: str = "ImagenesMultimedia"):
+    """Crear tabla para almacenar imágenes con índice SIFT"""
+    global sift_image_manager
+
+    try:
+        # Formato de la tabla: id, nombre, ruta
+        table_format = {"id": "i", "nombre": "100s", "ruta": "200s"}
+
+        # Rutas de archivos
+        base_dir = os.path.join(os.path.dirname(__file__), "..")
+        data_file = os.path.join("data", "sift", f"{table_name}.heap")
+        index_file = os.path.join("data", "sift", f"{table_name}_index.heap")
+
+        # Crear directorio si no existe
+        os.makedirs(
+            os.path.join(os.path.dirname(__file__), "data", "sift"), exist_ok=True
+        )
+
+        # Inicializar el gestor de imágenes SIFT
+        sift_image_manager = MultimediaImageRetrieval(
+            table_format=table_format,
+            key="id",
+            data_file_name=data_file,
+            index_file_name=index_file,
+            base_dir=base_dir,
+            z=256,
+            n_clusters=100,
+            force_create=True,
+            ruta_col_name="ruta",
+        )
+
+        return {
+            "success": True,
+            "message": f"Tabla '{table_name}' creada exitosamente con índice SIFT",
+            "table_name": table_name,
+            "columns": ["id", "nombre", "ruta"],
+            "sift_config": {"image_size": 256, "clusters": 100},
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error creando tabla SIFT: {str(e)}"
+        )
+
+
+@app.post("/api/sift/upload-image")
+async def upload_image(
+    file: UploadFile = File(...),
+    image_id: Optional[int] = Form(None),
+    image_name: Optional[str] = Form(None),
+):
+    """Subir una imagen y agregarla al índice SIFT"""
+    global sift_image_manager
+
+    # Auto-crear tabla si no existe
+    if sift_image_manager is None:
+        try:
+            print("[SIFT] Creando tabla por primera vez...")
+            table_format = {"id": "i", "nombre": "100s", "ruta": "200s"}
+            base_dir = os.path.join(os.path.dirname(__file__), "..")
+            data_file = os.path.join("data", "sift", "images.heap")
+            index_file = os.path.join("data", "sift", "images_index.heap")
+
+            os.makedirs(
+                os.path.join(os.path.dirname(__file__), "data", "sift"), exist_ok=True
+            )
+
+            sift_image_manager = MultimediaImageRetrieval(
+                table_format=table_format,
+                key="id",
+                data_file_name=data_file,
+                index_file_name=index_file,
+                base_dir=base_dir,
+                z=256,
+                n_clusters=50,  # Reducido de 100 a 50 para más velocidad
+                force_create=True,
+                ruta_col_name="ruta",
+            )
+            print("[SIFT] Tabla creada exitosamente")
+        except Exception as e:
+            print(f"[SIFT ERROR] {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error creando tabla automáticamente: {str(e)}",
+            )
+
+    try:
+        print(f"[SIFT] Procesando imagen: {file.filename}")
+
+        # Validar que sea una imagen
+        if not file.content_type or not file.content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El archivo debe ser una imagen. Tipo recibido: {file.content_type}",
+            )
+
+        # Auto-generar ID si no se proporciona
+        if image_id is None:
+            all_records = sift_image_manager.HEAP.scan_all()
+            if all_records:
+                max_id = max(record[0] for record in all_records)
+                image_id = max_id + 1
+            else:
+                image_id = 1
+
+        print(f"[SIFT] Asignado ID: {image_id}")
+
+        # Generar nombre si no se proporciona
+        if not image_name:
+            image_name = os.path.splitext(file.filename)[0]
+
+        # Guardar la imagen en el directorio de imágenes
+        file_extension = os.path.splitext(file.filename)[1]
+        image_filename = f"{image_name}_{image_id}{file_extension}"
+        image_path = os.path.join(IMAGES_DIR, image_filename)
+
+        # Guardar el archivo
+        print(f"[SIFT] Guardando archivo en disco...")
+        with open(image_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Ruta relativa para almacenar en la BD
+        relative_path = os.path.join(
+            "api", "data", "sift", "uploaded_images", image_filename
+        )
+
+        # Insertar registro en el heap principal
+        print(f"[SIFT] Insertando en heap principal...")
+        pos = sift_image_manager.HEAP.insert([image_id, image_name, relative_path])
+
+        # Agregar al índice SIFT (esto puede tomar tiempo)
+        print(f"[SIFT] Extrayendo descriptores SIFT y actualizando índice...")
+        insert_result = sift_image_manager.insert(pos)
+
+        # Construir mensaje según el resultado
+        if insert_result["has_vocabulary"]:
+            message = "Imagen subida e indexada exitosamente con TF-IDF"
+            print(f"[SIFT] ✓ Imagen indexada con vocabulario (ID: {image_id})")
+        else:
+            images_count = insert_result.get("images_count", 0)
+            message = (
+                f"Imagen guardada. Vocabulario pendiente ({images_count}/10 imágenes)"
+            )
+            print(
+                f"[SIFT] ✓ Imagen guardada sin vocabulario aún (ID: {image_id}, {images_count}/10)"
+            )
+
+        return {
+            "success": True,
+            "message": message,
+            "image_id": image_id,
+            "image_name": image_name,
+            "position": pos,
+            "path": image_path,
+            "has_vocabulary": insert_result["has_vocabulary"],
+            "images_count": insert_result.get("images_count", None),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[SIFT ERROR] {str(e)}")
+        import traceback
+
+        traceback.print_exc()
+        # Limpiar archivo si hay error
+        if "image_path" in locals() and os.path.exists(image_path):
+            os.remove(image_path)
+        raise HTTPException(status_code=500, detail=f"Error subiendo imagen: {str(e)}")
+
+
+@app.post("/api/sift/search-similar")
+async def search_similar_images(file: UploadFile = File(...), k: int = Form(10)):
+    """Buscar las k imágenes más similares a una imagen query"""
+    global sift_image_manager
+
+    if sift_image_manager is None:
+        raise HTTPException(status_code=400, detail="No hay tabla de imágenes creada")
+
+    query_temp_path = None
+    try:
+        # Validar que sea una imagen
+        if not file.content_type or not file.content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El archivo debe ser una imagen. Tipo recibido: {file.content_type}",
+            )
+
+        # Guardar temporalmente la imagen query
+        query_temp_path = os.path.join(
+            IMAGES_DIR, f"query_temp_{int(time.time() * 1000)}.jpg"
+        )
+        with open(query_temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Realizar búsqueda KNN usando la ruta temporal
+        similar_data = sift_image_manager.knn_search_with_similarity(
+            query_temp_path, k=k
+        )
+
+        # Obtener información de las imágenes similares
+        results = []
+        for pos, similarity in similar_data:
+            record = sift_image_manager.HEAP.read(pos)
+            results.append(
+                {
+                    "id": record[0],
+                    "nombre": (
+                        record[1].strip()
+                        if isinstance(record[1], str)
+                        else record[1].decode("utf-8").strip()
+                    ),
+                    "similarity": float(similarity),
+                    "position": pos,
+                }
+            )
+
+        return {
+            "success": True,
+            "results": results,
+            "count": len(results),
+            "k_requested": k,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error buscando imágenes similares: {str(e)}"
+        )
+    finally:
+        # Limpiar archivo temporal
+        if query_temp_path and os.path.exists(query_temp_path):
+            try:
+                os.remove(query_temp_path)
+            except:
+                pass
+
+
+@app.get("/api/sift/images")
+async def list_all_images():
+    """Listar todas las imágenes en el sistema"""
+    global sift_image_manager
+
+    if sift_image_manager is None:
+        return {
+            "success": True,
+            "images": [],
+            "count": 0,
+            "message": "No hay tabla de imágenes creada",
+        }
+
+    try:
+        all_records = sift_image_manager.HEAP.scan_all()
+
+        images = []
+        for i, record in enumerate(all_records):
+            images.append(
+                {
+                    "id": record[0],
+                    "nombre": (
+                        record[1].strip()
+                        if isinstance(record[1], str)
+                        else record[1].decode("utf-8").strip()
+                    ),
+                    "ruta": (
+                        record[2].strip()
+                        if isinstance(record[2], str)
+                        else record[2].decode("utf-8").strip()
+                    ),
+                    "position": i,
+                }
+            )
+
+        return {"success": True, "images": images, "count": len(images)}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error listando imágenes: {str(e)}"
+        )
+
+
+@app.get("/api/sift/image/{image_id}")
+async def get_image_by_id(image_id: int):
+    """Obtener información de una imagen por su ID"""
+    global sift_image_manager
+
+    if sift_image_manager is None:
+        raise HTTPException(status_code=400, detail="No hay tabla de imágenes creada")
+
+    try:
+        all_records = sift_image_manager.HEAP.scan_all()
+
+        for i, record in enumerate(all_records):
+            if record[0] == image_id:
+                return {
+                    "success": True,
+                    "image": {
+                        "id": record[0],
+                        "nombre": (
+                            record[1].strip()
+                            if isinstance(record[1], str)
+                            else record[1].decode("utf-8").strip()
+                        ),
+                        "ruta": (
+                            record[2].strip()
+                            if isinstance(record[2], str)
+                            else record[2].decode("utf-8").strip()
+                        ),
+                        "position": i,
+                    },
+                }
+
+        raise HTTPException(
+            status_code=404, detail=f"Imagen con ID {image_id} no encontrada"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo imagen: {str(e)}"
+        )
+
+
+@app.get("/api/sift/image-file/{image_id}")
+async def get_image_file(image_id: int):
+    """Obtener el archivo de imagen por su ID"""
+    global sift_image_manager
+
+    if sift_image_manager is None:
+        raise HTTPException(status_code=400, detail="No hay tabla de imágenes creada")
+
+    try:
+        # Buscar la imagen por ID
+        all_records = sift_image_manager.HEAP.scan_all()
+        image_path = None
+
+        for record in all_records:
+            if record[0] == image_id:
+                ruta = (
+                    record[2].strip()
+                    if isinstance(record[2], str)
+                    else record[2].decode("utf-8").strip()
+                )
+                # Convertir ruta relativa a absoluta
+                image_path = os.path.join(os.path.dirname(__file__), "..", ruta)
+                break
+
+        if not image_path or not os.path.exists(image_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Archivo de imagen no encontrado para ID {image_id}",
+            )
+
+        return FileResponse(
+            image_path,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo archivo de imagen: {str(e)}"
+        )
+
+
+# ==================== FIN ENDPOINTS SIFT ====================
+
+
 # Montar archivos estáticos
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
@@ -532,7 +919,9 @@ if os.path.exists(static_dir):
 # Manejar errores 404 para rutas no encontradas
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return {"error": "Endpoint no encontrado", "detail": str(exc)}
+    return JSONResponse(
+        status_code=404, content={"error": "Endpoint no encontrado", "detail": str(exc)}
+    )
 
 
 if __name__ == "__main__":

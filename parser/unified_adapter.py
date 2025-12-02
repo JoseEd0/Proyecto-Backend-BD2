@@ -25,6 +25,7 @@ ESPECIFICAR ÍNDICE MANUALMENTE:
 - CREATE TABLE ... USING INDEX Seq('columna')
 - CREATE TABLE ... USING INDEX BOW('columna')
 """
+
 import os
 import sys
 import csv
@@ -43,46 +44,43 @@ HAS_BOW = False
 
 try:
     from Sequential_Struct.sequential_file import SequentialFile  # type: ignore
+
     HAS_SEQUENTIAL = True
 except Exception as e:
     print(f"[WARNING] Sequential File no disponible: {e}")
 
 try:
     from b_plus_tree.bplustree import BPlusTree  # type: ignore
+
     HAS_BTREE = True
 except Exception as e:
     print(f"[WARNING] B+ Tree no disponible: {e}")
 
 try:
     from ISAM.ISAM import create_isam_index, ISAMIndex  # type: ignore
+
     HAS_ISAM = True
 except Exception:
     try:
         from ISAM import create_isam_index, ISAMIndex  # type: ignore
+
         HAS_ISAM = True
     except Exception as e:
         print(f"[WARNING] ISAM no disponible: {e}")
 
-try:
-    from extendible_hashing.extendible_hashing import DiskExtendibleHashing  # type: ignore
-    HAS_HASH = True
-except Exception as e:
-    print(f"[WARNING] Extendible Hashing no disponible: {e}")
+# Extendible Hashing usa TextDirectory/SQLHashEngine, no DiskExtendibleHashing
+HAS_HASH = (
+    False  # Deshabilitado por ahora - estructura no compatible con interfaz esperada
+)
 
-try:
-    from rtree_impl import RTreeIndex, Point, SpatialRecord, create_record  # type: ignore
-    HAS_RTREE = True
-except Exception:
-    try:
-        from Rtree.rtree_impl import RTreeIndex, Point, SpatialRecord, create_record  # type: ignore
-        HAS_RTREE = True
-    except Exception as e:
-        print(f"[WARNING] R-Tree no disponible: {e}")
+# R-Tree no está implementado en este proyecto
+HAS_RTREE = False
 
 try:
     from inverted_index.indexer import SPIMIIndexer
     from inverted_index.query_engine import QueryEngine
     from inverted_index.preprocessing import TextPreprocessor
+
     HAS_BOW = True
 except Exception as e:
     print(f"[WARNING] Bag of Words no disponible: {e}")
@@ -108,20 +106,26 @@ class StructureType:
 
 class StructureSelector:
     @staticmethod
-    def select_structure(index_type: Optional[IndexType], key_data_type: DataType, has_spatial_queries: bool = False) -> Optional[str]:
+    def select_structure(
+        index_type: Optional[IndexType],
+        key_data_type: DataType,
+        has_spatial_queries: bool = False,
+    ) -> Optional[str]:
         """Devuelve el tipo de estructura a usar dado un índice deseado y tipo de clave.
         Si index_type es None, aplica heurísticas y un fallback sensato.
         """
         if index_type:
             mapping = {
-                IndexType.SEQ:   (StructureType.SEQUENTIAL, HAS_SEQUENTIAL),
+                IndexType.SEQ: (StructureType.SEQUENTIAL, HAS_SEQUENTIAL),
                 IndexType.BTREE: (StructureType.BTREE, HAS_BTREE),
-                IndexType.ISAM:  (StructureType.ISAM, HAS_ISAM),
-                IndexType.HASH:  (StructureType.HASH, HAS_HASH),
+                IndexType.ISAM: (StructureType.ISAM, HAS_ISAM),
+                IndexType.HASH: (StructureType.HASH, HAS_HASH),
                 IndexType.RTREE: (StructureType.RTREE, HAS_RTREE),
-                IndexType.BOW:   (StructureType.BOW, HAS_BOW),
+                IndexType.BOW: (StructureType.BOW, HAS_BOW),
             }
-            structure, is_available = mapping.get(index_type, (StructureType.SEQUENTIAL, HAS_SEQUENTIAL))
+            structure, is_available = mapping.get(
+                index_type, (StructureType.SEQUENTIAL, HAS_SEQUENTIAL)
+            )
             if not is_available:
                 return StructureType.SEQUENTIAL if HAS_SEQUENTIAL else None
             return structure
@@ -157,7 +161,14 @@ class UnifiedDatabaseAdapter:
     def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        for structure in [StructureType.SEQUENTIAL, StructureType.BTREE, StructureType.ISAM, StructureType.HASH, StructureType.RTREE, StructureType.BOW]:
+        for structure in [
+            StructureType.SEQUENTIAL,
+            StructureType.BTREE,
+            StructureType.ISAM,
+            StructureType.HASH,
+            StructureType.RTREE,
+            StructureType.BOW,
+        ]:
             (self.data_dir / structure).mkdir(parents=True, exist_ok=True)
         self.tables: Dict[str, Any] = {}
         self.table_structures: Dict[str, str] = {}
@@ -198,17 +209,28 @@ class UnifiedDatabaseAdapter:
             columns.append(
                 {
                     "name": col.name,
-                    "type": (col.data_type.value if hasattr(col.data_type, "value") else str(col.data_type)),
+                    "type": (
+                        col.data_type.value
+                        if hasattr(col.data_type, "value")
+                        else str(col.data_type)
+                    ),
                     "size": getattr(col, "size", None),
                     "is_key": getattr(col, "is_key", False),
-                    "index_type": (col.index_type.value if getattr(col, "index_type", None) and hasattr(col.index_type, "value") else None),
+                    "index_type": (
+                        col.index_type.value
+                        if getattr(col, "index_type", None)
+                        and hasattr(col.index_type, "value")
+                        else None
+                    ),
                 }
             )
         return {
             "name": table_name,
             "columns": columns,
             "structure": structure_type,
-            "record_count": (len(self.scan_all(table_name)) if table_name in self.tables else 0),
+            "record_count": (
+                len(self.scan_all(table_name)) if table_name in self.tables else 0
+            ),
         }
 
     def list_tables(self) -> List[str]:
@@ -226,7 +248,9 @@ class UnifiedDatabaseAdapter:
                 raise ValueError(f"La tabla '{table_name}' ya existe")
             key_column = self._get_key_column(schema)
             if not key_column:
-                raise ValueError(f"No se especificó columna KEY para la tabla '{table_name}'")
+                raise ValueError(
+                    f"No se especificó columna KEY para la tabla '{table_name}'"
+                )
 
             # Check if any column requests BOW
             if any(getattr(col, "index_type", None) == IndexType.BOW for col in schema):
@@ -237,11 +261,13 @@ class UnifiedDatabaseAdapter:
                     key_column.data_type,
                     has_spatial_queries=(key_column.data_type == DataType.ARRAY_FLOAT),
                 )
-            
+
             if structure_type is None:
                 raise ValueError("No hay estructuras de datos disponibles.")
 
-            self._log_operation(f"CREATE TABLE {table_name} usando estructura {structure_type.upper()}")
+            self._log_operation(
+                f"CREATE TABLE {table_name} usando estructura {structure_type.upper()}"
+            )
 
             if structure_type == StructureType.SEQUENTIAL:
                 self._create_sequential_table(table_name, schema, key_column)
@@ -265,15 +291,21 @@ class UnifiedDatabaseAdapter:
             self._log_operation(f"[ERROR] Error creando tabla '{table_name}': {e}")
             raise
 
-    def _create_sequential_table(self, table_name: str, schema: List[Column], key_column: Column) -> None:
+    def _create_sequential_table(
+        self, table_name: str, schema: List[Column], key_column: Column
+    ) -> None:
         if not HAS_SEQUENTIAL:
             raise ImportError("Sequential File no está disponible")
         table_format: Dict[str, str] = {}
         for col in schema:
             format_str = self._convert_column_to_struct_format(col)
             table_format[col.name] = format_str
-        index_file = str(self.data_dir / StructureType.SEQUENTIAL / f"{table_name}_index.bin")
-        data_file = str(self.data_dir / StructureType.SEQUENTIAL / f"{table_name}_data.bin")
+        index_file = str(
+            self.data_dir / StructureType.SEQUENTIAL / f"{table_name}_index.bin"
+        )
+        data_file = str(
+            self.data_dir / StructureType.SEQUENTIAL / f"{table_name}_data.bin"
+        )
         sequential = SequentialFile(
             table_format=table_format,
             name_key=key_column.name,
@@ -284,7 +316,9 @@ class UnifiedDatabaseAdapter:
         )
         self.tables[table_name] = sequential
 
-    def _create_btree_table(self, table_name: str, schema: List[Column], key_column: Column) -> None:
+    def _create_btree_table(
+        self, table_name: str, schema: List[Column], key_column: Column
+    ) -> None:
         if not HAS_BTREE:
             raise ImportError("B+ Tree no está disponible")
         storage_path = str(self.data_dir / StructureType.BTREE / table_name)
@@ -294,7 +328,9 @@ class UnifiedDatabaseAdapter:
             btree._data_storage = {}
         self.tables[table_name] = btree
 
-    def _create_isam_table(self, table_name: str, key_column: Column, block_factor: int = 4) -> ISAMIndex:
+    def _create_isam_table(
+        self, table_name: str, key_column: Column, block_factor: int = 4
+    ) -> ISAMIndex:
         if not HAS_ISAM:
             raise RuntimeError("ISAM no disponible")
         storage_dir = self.data_dir / "isam" / table_name
@@ -307,7 +343,9 @@ class UnifiedDatabaseAdapter:
         self.table_structures[table_name] = StructureType.ISAM
         return index
 
-    def _create_hash_table(self, table_name: str, schema: List[Column], key_column: Column) -> None:
+    def _create_hash_table(
+        self, table_name: str, schema: List[Column], key_column: Column
+    ) -> None:
         if not HAS_HASH:
             raise ImportError("Extendible Hashing no está disponible")
         dir_path = str(self.data_dir / StructureType.HASH / table_name)
@@ -320,7 +358,9 @@ class UnifiedDatabaseAdapter:
         )
         self.tables[table_name] = hash_table
 
-    def _create_rtree_table(self, table_name: str, schema: List[Column], key_column: Column) -> None:
+    def _create_rtree_table(
+        self, table_name: str, schema: List[Column], key_column: Column
+    ) -> None:
         if not HAS_RTREE:
             raise ImportError("R-Tree no está disponible")
         file_path = str(self.data_dir / StructureType.RTREE / table_name)
@@ -328,13 +368,15 @@ class UnifiedDatabaseAdapter:
         rtree = RTreeIndex(file_path=file_path, dimension=2)  # type: ignore
         self.tables[table_name] = rtree
 
-    def _create_bow_table(self, table_name: str, schema: List[Column], key_column: Column) -> None:
+    def _create_bow_table(
+        self, table_name: str, schema: List[Column], key_column: Column
+    ) -> None:
         if not HAS_BOW:
             raise ImportError("Bag of Words no está disponible")
-        
+
         index_dir = str(self.data_dir / StructureType.BOW / table_name)
         os.makedirs(index_dir, exist_ok=True)
-        
+
         indexer = SPIMIIndexer(output_dir=index_dir)
         self.tables[table_name] = indexer
 
@@ -351,7 +393,9 @@ class UnifiedDatabaseAdapter:
             elif structure_type == StructureType.BTREE:
                 key_index = next(i for i, col in enumerate(schema) if col.is_key)
                 key = record[key_index]
-                if hasattr(structure, "_data_storage") and isinstance(structure._data_storage, dict):
+                if hasattr(structure, "_data_storage") and isinstance(
+                    structure._data_storage, dict
+                ):
                     structure._data_storage[key] = record
                 structure.add(key, record)
                 success = True
@@ -366,14 +410,21 @@ class UnifiedDatabaseAdapter:
             elif structure_type == StructureType.RTREE:
                 key_index = next(i for i, col in enumerate(schema) if col.is_key)
                 record_id = str(record[key_index])
-                coord_index = next((i for i, col in enumerate(schema) if col.data_type == DataType.ARRAY_FLOAT), None)
+                coord_index = next(
+                    (
+                        i
+                        for i, col in enumerate(schema)
+                        if col.data_type == DataType.ARRAY_FLOAT
+                    ),
+                    None,
+                )
                 if coord_index is None:
                     raise ValueError("R-Tree requiere una columna ARRAY[FLOAT]")
                 coordinates = record[coord_index]
-                
+
                 # Ensure coordinates are floats
                 coordinates = [float(x) for x in coordinates]
-                
+
                 # Create SpatialRecord
                 spatial_record = create_record(record_id, coordinates, record)
                 structure.insert(spatial_record)
@@ -381,18 +432,32 @@ class UnifiedDatabaseAdapter:
 
             elif structure_type == StructureType.BOW:
                 # Find content column
-                content_index = next((i for i, col in enumerate(schema) if getattr(col, "index_type", None) == IndexType.BOW), None)
+                content_index = next(
+                    (
+                        i
+                        for i, col in enumerate(schema)
+                        if getattr(col, "index_type", None) == IndexType.BOW
+                    ),
+                    None,
+                )
                 if content_index is None:
                     # Fallback: look for VARCHAR
-                    content_index = next((i for i, col in enumerate(schema) if col.data_type == DataType.VARCHAR), None)
-                
+                    content_index = next(
+                        (
+                            i
+                            for i, col in enumerate(schema)
+                            if col.data_type == DataType.VARCHAR
+                        ),
+                        None,
+                    )
+
                 if content_index is None:
-                     raise ValueError("BOW requiere una columna de texto")
+                    raise ValueError("BOW requiere una columna de texto")
 
                 key_index = next(i for i, col in enumerate(schema) if col.is_key)
                 doc_id = record[key_index]
                 text = record[content_index]
-                
+
                 # Tokenize
                 try:
                     preprocessor = TextPreprocessor()
@@ -400,13 +465,13 @@ class UnifiedDatabaseAdapter:
                     # self._log_operation(f"[DEBUG] Text: '{text}' -> Tokens: {tokens}")
                 except Exception as e:
                     self._log_operation(f"[WARNING] Error preprocesando texto: {e}")
-                    tokens = text.split() # Fallback
+                    tokens = text.split()  # Fallback
 
                 # IMPORTANT: We need to persist the record for retrieval!
                 # Let's use a simple pickle file in the index dir for raw data
                 index_dir = Path(self.data_dir / StructureType.BOW / table_name)
                 data_storage_path = index_dir / "data_storage.pkl"
-                
+
                 # Load existing storage
                 if not hasattr(structure, "_data_storage"):
                     if data_storage_path.exists():
@@ -414,27 +479,31 @@ class UnifiedDatabaseAdapter:
                             structure._data_storage = pickle.load(f)
                     else:
                         structure._data_storage = {}
-                
+
                 structure._data_storage[doc_id] = record
-                
+
                 # Save storage
                 with open(data_storage_path, "wb") as f:
                     pickle.dump(structure._data_storage, f)
-                
+
                 # Add to index
                 if hasattr(structure, "add_document"):
                     structure.add_document(doc_id, tokens)
-                    
+
                     # FORCE FLUSH/MERGE for immediate consistency (inefficient but needed for tests)
                     structure.write_block_to_disk()
                     structure.merge_blocks()
-                    
+
                     # Compute TF-IDF
-                    total_docs = len(structure._data_storage) if hasattr(structure, "_data_storage") else 1
+                    total_docs = (
+                        len(structure._data_storage)
+                        if hasattr(structure, "_data_storage")
+                        else 1
+                    )
                     structure.compute_tfidf_and_norms(total_docs)
                 else:
                     pass
-                
+
                 success = True
 
             else:
@@ -456,7 +525,7 @@ class UnifiedDatabaseAdapter:
             raise ValueError(f"Tabla '{table_name}' no existe")
         structure_type = self.table_structures[table_name]
         structure = self.tables[table_name]
-        
+
         try:
             raw_results = []
             if structure_type == StructureType.SEQUENTIAL:
@@ -485,27 +554,31 @@ class UnifiedDatabaseAdapter:
                 all_records = self._scan_all_raw(table_name)
                 # Filter by key
                 # Assuming key is the ID
-                raw_results = [r for r in all_records if str(r[0]) == str(key)] # simplistic assumption
+                raw_results = [
+                    r for r in all_records if str(r[0]) == str(key)
+                ]  # simplistic assumption
 
             elif structure_type == StructureType.BOW:
                 # Search by keyword (content) or ID?
                 # If column is the content column, use index.
                 # If column is ID, use data storage.
-                
+
                 schema = self.table_schemas[table_name]
                 col_obj = next((c for c in schema if c.name == column), None)
-                
+
                 if col_obj and getattr(col_obj, "index_type", None) == IndexType.BOW:
                     # Search by keyword
-                    query_engine = QueryEngine(structure.output_dir) # structure is indexer
+                    query_engine = QueryEngine(
+                        structure.output_dir
+                    )  # structure is indexer
                     # QueryEngine might need to be initialized with the index dir
                     # Assuming QueryEngine(index_dir) works
-                    
+
                     # search(query) returns list of (doc_id, score)
                     search_results = query_engine.search(str(key))
-                    
+
                     doc_ids = [r[0] for r in search_results]
-                    
+
                     # Retrieve records
                     index_dir = Path(self.data_dir / StructureType.BOW / table_name)
                     data_storage_path = index_dir / "data_storage.pkl"
@@ -515,15 +588,18 @@ class UnifiedDatabaseAdapter:
                                 structure._data_storage = pickle.load(f)
                         else:
                             structure._data_storage = {}
-                    
+
                     raw_results = []
                     for did in doc_ids:
                         if did in structure._data_storage:
                             raw_results.append(structure._data_storage[did])
-                            
+
                 else:
                     # Search by ID
-                    if hasattr(structure, "_data_storage") and key in structure._data_storage:
+                    if (
+                        hasattr(structure, "_data_storage")
+                        and key in structure._data_storage
+                    ):
                         raw_results = [structure._data_storage[key]]
                     else:
                         raw_results = []
@@ -534,12 +610,14 @@ class UnifiedDatabaseAdapter:
             self._log_operation(f"[ERROR] Error buscando en '{table_name}': {e}")
             raise
 
-    def range_search(self, table_name: str, column: str, begin_key: Any, end_key: Any) -> List[Dict[str, Any]]:
+    def range_search(
+        self, table_name: str, column: str, begin_key: Any, end_key: Any
+    ) -> List[Dict[str, Any]]:
         if table_name not in self.tables:
             raise ValueError(f"Tabla '{table_name}' no existe")
         structure_type = self.table_structures[table_name]
         structure = self.tables[table_name]
-        
+
         try:
             raw_results = []
             if structure_type == StructureType.SEQUENTIAL:
@@ -552,7 +630,9 @@ class UnifiedDatabaseAdapter:
                 raw_results = structure.range_search(int(begin_key), int(end_key))
 
             elif structure_type == StructureType.HASH:
-                self._log_operation("[WARNING] Hash no soporta RANGE, haciendo scan completo")
+                self._log_operation(
+                    "[WARNING] Hash no soporta RANGE, haciendo scan completo"
+                )
                 raw_results = self._scan_all_raw(table_name)
                 schema = self.table_schemas[table_name]
                 key_index = next(i for i, col in enumerate(schema) if col.is_key)
@@ -565,32 +645,42 @@ class UnifiedDatabaseAdapter:
                 raw_results = filtered
 
             elif structure_type == StructureType.RTREE:
-                self._log_operation("[WARNING] RTree range search (scalar) not optimized")
+                self._log_operation(
+                    "[WARNING] RTree range search (scalar) not optimized"
+                )
                 # Similar fallback
                 raw_results = []
 
             elif structure_type == StructureType.BOW:
                 # Range search on ID?
-                self._log_operation("[WARNING] BOW no soporta RANGE eficiente, haciendo scan completo")
+                self._log_operation(
+                    "[WARNING] BOW no soporta RANGE eficiente, haciendo scan completo"
+                )
                 raw_results = self._scan_all_raw(table_name)
                 # Filter by key range if applicable
                 # ...
 
-            self._log_operation(f"RANGE SEARCH {table_name} WHERE {column} BETWEEN {begin_key} AND {end_key}")
+            self._log_operation(
+                f"RANGE SEARCH {table_name} WHERE {column} BETWEEN {begin_key} AND {end_key}"
+            )
             return self._records_to_dicts(table_name, raw_results)
         except Exception as e:
             self._log_operation(f"[ERROR] Error en range_search de '{table_name}': {e}")
             raise
 
-    def spatial_range_search(self, table_name: str, column: str, point: List[float], radius: float) -> List[Dict[str, Any]]:
+    def spatial_range_search(
+        self, table_name: str, column: str, point: List[float], radius: float
+    ) -> List[Dict[str, Any]]:
         return self.spatial_search(table_name, column, point, radius)
 
-    def spatial_search(self, table_name: str, column: str, point: List[float], radius: float) -> List[Dict[str, Any]]:
+    def spatial_search(
+        self, table_name: str, column: str, point: List[float], radius: float
+    ) -> List[Dict[str, Any]]:
         if table_name not in self.tables:
             raise ValueError(f"Tabla '{table_name}' no existe")
         structure_type = self.table_structures[table_name]
         structure = self.tables[table_name]
-        
+
         try:
             if structure_type == StructureType.RTREE:
                 # point is [x, y]
@@ -601,20 +691,26 @@ class UnifiedDatabaseAdapter:
                 results = structure.range_search(center, radius)
                 raw_results = [r.data for r in results]
             else:
-                self._log_operation(f"[WARNING] {structure_type.upper()} no está optimizado para spatial search")
+                self._log_operation(
+                    f"[WARNING] {structure_type.upper()} no está optimizado para spatial search"
+                )
                 raw_results = []
-            self._log_operation(f"SPATIAL SEARCH {table_name} WHERE {column} IN ({point}, {radius})")
+            self._log_operation(
+                f"SPATIAL SEARCH {table_name} WHERE {column} IN ({point}, {radius})"
+            )
             return self._records_to_dicts(table_name, raw_results)
         except Exception as e:
-            self._log_operation(f"[ERROR] Error en spatial_search de '{table_name}': {e}")
+            self._log_operation(
+                f"[ERROR] Error en spatial_search de '{table_name}': {e}"
+            )
             raise
 
     def remove(self, table_name: str, column: str, key: Any) -> bool:
         if table_name not in self.tables:
-             raise ValueError(f"Tabla '{table_name}' no existe")
+            raise ValueError(f"Tabla '{table_name}' no existe")
         structure_type = self.table_structures[table_name]
         structure = self.tables[table_name]
-        
+
         try:
             success = False
             if structure_type == StructureType.SEQUENTIAL:
@@ -631,17 +727,20 @@ class UnifiedDatabaseAdapter:
                 # structure.delete(record) usually requires the record or ID+bounds
                 pass
             elif structure_type == StructureType.BOW:
-                 # Delete from storage
-                 index_dir = Path(self.data_dir / StructureType.BOW / table_name)
-                 data_storage_path = index_dir / "data_storage.pkl"
-                 if hasattr(structure, "_data_storage") and key in structure._data_storage:
-                     del structure._data_storage[key]
-                     with open(data_storage_path, "wb") as f:
-                         pickle.dump(structure._data_storage, f)
-                     success = True
-                 # Also need to remove from index? Hard in SPIMI/Inverted Index.
-                 # Usually we just mark as deleted or ignore.
-            
+                # Delete from storage
+                index_dir = Path(self.data_dir / StructureType.BOW / table_name)
+                data_storage_path = index_dir / "data_storage.pkl"
+                if (
+                    hasattr(structure, "_data_storage")
+                    and key in structure._data_storage
+                ):
+                    del structure._data_storage[key]
+                    with open(data_storage_path, "wb") as f:
+                        pickle.dump(structure._data_storage, f)
+                    success = True
+                # Also need to remove from index? Hard in SPIMI/Inverted Index.
+                # Usually we just mark as deleted or ignore.
+
             if success:
                 self._log_operation(f"DELETE FROM {table_name} WHERE {column} = {key}")
             return success
@@ -658,34 +757,36 @@ class UnifiedDatabaseAdapter:
             return []
         structure_type = self.table_structures[table_name]
         structure = self.tables[table_name]
-        
+
         if structure_type == StructureType.SEQUENTIAL:
             return structure.scan()
         elif structure_type == StructureType.BTREE:
-             # BTree scan?
-             # Assuming it has a way to iterate
-             # Or range search from min to max
-             return [] # Implement if BTree supports it
+            # BTree scan?
+            # Assuming it has a way to iterate
+            # Or range search from min to max
+            return []  # Implement if BTree supports it
         elif structure_type == StructureType.ISAM:
-             return [] # Implement
+            return []  # Implement
         elif structure_type == StructureType.HASH:
-             return structure.get_all()
+            return structure.get_all()
         elif structure_type == StructureType.RTREE:
-             return structure.scan()
+            return structure.scan()
         elif structure_type == StructureType.BOW:
-             # Return all from storage
-             index_dir = Path(self.data_dir / StructureType.BOW / table_name)
-             data_storage_path = index_dir / "data_storage.pkl"
-             if not hasattr(structure, "_data_storage"):
+            # Return all from storage
+            index_dir = Path(self.data_dir / StructureType.BOW / table_name)
+            data_storage_path = index_dir / "data_storage.pkl"
+            if not hasattr(structure, "_data_storage"):
                 if data_storage_path.exists():
                     with open(data_storage_path, "rb") as f:
                         structure._data_storage = pickle.load(f)
                 else:
                     structure._data_storage = {}
-             return list(structure._data_storage.values())
+            return list(structure._data_storage.values())
         return []
 
-    def _records_to_dicts(self, table_name: str, records: List[Any]) -> List[Dict[str, Any]]:
+    def _records_to_dicts(
+        self, table_name: str, records: List[Any]
+    ) -> List[Dict[str, Any]]:
         if not records:
             return []
         schema = self.table_schemas[table_name]
@@ -723,30 +824,32 @@ class UnifiedDatabaseAdapter:
         except:
             return value
 
-    def _insert_csv_in_batches(self, table_name: str, csv_path: str, batch_size: int = 1000) -> None:
+    def _insert_csv_in_batches(
+        self, table_name: str, csv_path: str, batch_size: int = 1000
+    ) -> None:
         if table_name not in self.table_schemas:
             raise ValueError(f"Tabla {table_name} no existe")
-        
+
         schema = self.table_schemas[table_name]
         batch = []
-        
-        with open(csv_path, 'r', encoding='utf-8') as f:
+
+        with open(csv_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
-            header = next(reader, None) # Skip header if present?
-            
+            header = next(reader, None)  # Skip header if present?
+
             for row in reader:
                 # Convert row types
                 converted_row = []
                 for i, val in enumerate(row):
                     if i < len(schema):
                         converted_row.append(self._cast_value(val, schema[i].data_type))
-                
+
                 batch.append(converted_row)
-                
+
                 if len(batch) >= batch_size:
                     self.add_many(table_name, batch)
                     batch = []
-            
+
             if batch:
                 self.add_many(table_name, batch)
 
