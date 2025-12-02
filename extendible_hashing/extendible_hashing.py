@@ -4,16 +4,18 @@ import csv
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
 def md5_hash(key: str, depth: int) -> int:
     """Genera hash MD5 y retorna los últimos 'depth' bits como entero."""
     h = hashlib.md5(str(key).encode()).hexdigest()
     bits = bin(int(h, 16))[2:].zfill(128)
     return int(bits[-depth:], 2) if depth > 0 else 0
 
+
 class TextBucket:
     """Bucket almacenado en archivo de texto plano."""
 
-    def _init_(self, path: Path, capacity: int, local_depth: int = 1):
+    def __init__(self, path: Path, capacity: int, local_depth: int = 1):
         self.path = Path(path)
         self.capacity = capacity
         self.local_depth = local_depth
@@ -27,13 +29,13 @@ class TextBucket:
 
     def _load(self):
         """Carga bucket desde archivo texto."""
-        with open(self.path, 'r', encoding='utf-8') as f:
+        with open(self.path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
         if len(lines) < 2:
             return
 
-        meta = lines[0].strip().split(',')
+        meta = lines[0].strip().split(",")
         self.local_depth = int(meta[0])
         self.next_bucket_id = int(meta[1])
 
@@ -44,7 +46,7 @@ class TextBucket:
 
     def _save(self):
         """Guarda bucket en archivo texto."""
-        with open(self.path, 'w', encoding='utf-8', newline='') as f:
+        with open(self.path, "w", encoding="utf-8", newline="") as f:
             f.write(f"{self.local_depth},{self.next_bucket_id}\n")
 
             if self.records:
@@ -58,9 +60,9 @@ class TextBucket:
 
     def insert(self, record: Dict[str, Any]):
         """Inserta o actualiza registro."""
-        key = record.get('id')
+        key = record.get("id")
         for i, rec in enumerate(self.records):
-            if rec.get('id') == key:
+            if rec.get("id") == key:
                 self.records[i] = record
                 self._save()
                 return
@@ -70,7 +72,7 @@ class TextBucket:
     def delete(self, key: str) -> bool:
         """Elimina registro por key."""
         for i, rec in enumerate(self.records):
-            if rec.get('id') == key:
+            if rec.get("id") == key:
                 del self.records[i]
                 self._save()
                 return True
@@ -79,12 +81,13 @@ class TextBucket:
     def search(self, key: str) -> Optional[Dict[str, Any]]:
         """Busca registro por key."""
         for rec in self.records:
-            if rec.get('id') == key:
+            if rec.get("id") == key:
                 return rec
         return None
 
     def get_all(self) -> List[Dict[str, Any]]:
         return list(self.records)
+
 
 class TextDirectory:
     """Directorio almacenado en archivo texto."""
@@ -103,10 +106,10 @@ class TextDirectory:
 
     def _load(self):
         """Carga directorio desde archivo."""
-        with open(self.path, 'r', encoding='utf-8') as f:
+        with open(self.path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-        meta = lines[0].strip().split(',')
+        meta = lines[0].strip().split(",")
         self.global_depth = int(meta[0])
         self.max_depth = int(meta[1])
         self.next_bucket_id = int(meta[2])
@@ -115,14 +118,14 @@ class TextDirectory:
 
     def _save(self):
         """Guarda directorio en archivo."""
-        with open(self.path, 'w', encoding='utf-8') as f:
+        with open(self.path, "w", encoding="utf-8") as f:
             f.write(f"{self.global_depth},{self.max_depth},{self.next_bucket_id}\n")
             for bid in self.entries:
                 f.write(f"{bid}\n")
 
     def _initialize(self):
         """Inicializa directorio vacío."""
-        size = 2 ** self.global_depth
+        size = 2**self.global_depth
         self.entries = [self.next_bucket_id] * size
         self.next_bucket_id += 1
         self._save()
@@ -155,11 +158,17 @@ class TextDirectory:
                     self.entries[i] = bid2
         self._save()
 
+
 class SQLHashEngine:
     """Motor SQL simple con índice Extendible Hashing en archivos texto."""
 
-    def _init_(self, data_dir: str = "sql_data", bucket_capacity: int = 3,
-               initial_depth: int = 1, max_depth: int = 4):
+    def _init_(
+        self,
+        data_dir: str = "sql_data",
+        bucket_capacity: int = 3,
+        initial_depth: int = 1,
+        max_depth: int = 4,
+    ):
         self.base = Path(data_dir)
         self.buckets_dir = self.base / "buckets"
         self.base.mkdir(parents=True, exist_ok=True)
@@ -202,9 +211,11 @@ class SQLHashEngine:
 
         all_records = bucket.get_all()
         for rec in all_records:
-            key = rec.get('id')
-            bits = bin(int(hashlib.md5(str(key).encode()).hexdigest(), 16))[2:].zfill(128)
-            if bits[-new_ld] == '0':
+            key = rec.get("id")
+            bits = bin(int(hashlib.md5(str(key).encode()).hexdigest(), 16))[2:].zfill(
+                128
+            )
+            if bits[-new_ld] == "0":
                 b1.insert(rec)
             else:
                 b2.insert(rec)
@@ -218,10 +229,10 @@ class SQLHashEngine:
 
     def INSERT(self, record: Dict[str, Any]):
         """INSERT: Inserta registro con clave 'id'."""
-        if 'id' not in record:
+        if "id" not in record:
             raise ValueError("Record must have 'id' field")
 
-        key = str(record['id'])
+        key = str(record["id"])
         bid = self.directory.get_bucket_id(key)
         bucket = self._load_bucket(bid)
 
@@ -233,7 +244,11 @@ class SQLHashEngine:
             if bucket.local_depth < self.directory.global_depth:
                 self._split_bucket(bid)
                 self.INSERT(record)
-            elif bucket.local_depth == self.directory.global_depth < self.directory.max_depth:
+            elif (
+                bucket.local_depth
+                == self.directory.global_depth
+                < self.directory.max_depth
+            ):
                 self.directory.double_directory()
                 self._split_bucket(bid)
                 self.INSERT(record)
@@ -278,8 +293,11 @@ class SQLHashEngine:
 
         return s
 
+
 if __name__ == "_main_":
-    db = SQLHashEngine(data_dir="sql_data", bucket_capacity=2, initial_depth=1, max_depth=3)
+    db = SQLHashEngine(
+        data_dir="sql_data", bucket_capacity=2, initial_depth=1, max_depth=3
+    )
 
     db.INSERT({"id": "001", "name": "Alice", "age": 25})
     db.INSERT({"id": "002", "name": "Bob", "age": 30})

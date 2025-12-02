@@ -38,16 +38,28 @@ class RegistroType:
         rt = RegistroType(table_format, "id")
     """
 
-    def __init__(self, table_format: Dict[str, str], name_key: str):
+    def __init__(
+        self, table_format: Dict[str, str], name_key: str = None, key_name: str = None
+    ):
         """
         Inicializa el tipo de registro
 
         Args:
             table_format: Diccionario con nombre_campo -> tipo_formato
-            name_key: Nombre del campo que es clave primaria
+            name_key: Nombre del campo que es clave primaria (preferido)
+            key_name: Alias de name_key para compatibilidad con código legacy
         """
+        # Compatibilidad: key_name es alias de name_key
+        if name_key is None and key_name is not None:
+            name_key = key_name
+        elif name_key is None and key_name is None:
+            raise ValueError("Debe proporcionar 'name_key' o 'key_name'")
+
         self.table_format = table_format
         self.name_key = name_key
+        # Alias para compatibilidad con código legacy
+        self.dict_format = table_format
+        self.key = name_key
         self.field_names = list(table_format.keys())
         self.format_key = table_format[name_key]
 
@@ -60,7 +72,7 @@ class RegistroType:
         format_parts = []
         for field_type in self.table_format.values():
             format_parts.append(field_type)
-        return ''.join(format_parts)
+        return "".join(format_parts)
 
     def correct_format(self, record: List[Any]) -> List[Any]:
         """
@@ -73,7 +85,9 @@ class RegistroType:
             Lista de valores con tipos correctos
         """
         if len(record) != len(self.field_names):
-            raise ValueError(f"Se esperaban {len(self.field_names)} campos, se recibieron {len(record)}")
+            raise ValueError(
+                f"Se esperaban {len(self.field_names)} campos, se recibieron {len(record)}"
+            )
 
         corrected = []
         for i, (field_name, field_type) in enumerate(self.table_format.items()):
@@ -89,40 +103,40 @@ class RegistroType:
             return self._get_null_value(field_type)
 
         # Tipos enteros
-        if field_type in ('i', 'q', 'Q', 'b'):
+        if field_type in ("i", "q", "Q", "b"):
             return int(value)
 
         # Tipos flotantes
-        elif field_type in ('f', 'd'):
+        elif field_type in ("f", "d"):
             return float(value)
 
         # Bool
-        elif field_type == '?':
+        elif field_type == "?":
             if isinstance(value, str):
-                return value.lower() in ('true', '1', 'yes', 'si', 'y')
+                return value.lower() in ("true", "1", "yes", "si", "y")
             return bool(value)
 
         # String
-        elif 's' in field_type:
+        elif "s" in field_type:
             max_length = int(field_type[:-1])
             if isinstance(value, bytes):
                 return value[:max_length]
             else:
-                return str(value).encode('utf-8')[:max_length]
+                return str(value).encode("utf-8")[:max_length]
 
         return value
 
     def _get_null_value(self, field_type: str) -> Any:
         """Retorna el valor nulo para un tipo de campo"""
-        if field_type in ('i', 'q', 'Q'):
+        if field_type in ("i", "q", "Q"):
             return -2147483648  # Valor sentinela para NULL
-        elif field_type in ('f', 'd'):
-            return float('nan')
-        elif field_type in ('b', '?'):
+        elif field_type in ("f", "d"):
+            return float("nan")
+        elif field_type in ("b", "?"):
             return -128
-        elif 's' in field_type:
+        elif "s" in field_type:
             max_length = int(field_type[:-1])
-            return b'\x00' * max_length
+            return b"\x00" * max_length
         else:
             return 0
 
@@ -142,15 +156,15 @@ class RegistroType:
             value = record[i]
 
             # Manejar strings
-            if 's' in field_type:
+            if "s" in field_type:
                 max_length = int(field_type[:-1])
                 if isinstance(value, str):
-                    value = value.encode('utf-8')
+                    value = value.encode("utf-8")
                 if isinstance(value, bytes):
                     # Asegurar que tenga el tamaño correcto
-                    value = value[:max_length].ljust(max_length, b'\x00')
+                    value = value[:max_length].ljust(max_length, b"\x00")
                 else:
-                    value = b'\x00' * max_length
+                    value = b"\x00" * max_length
 
             values_to_pack.append(value)
 
@@ -167,9 +181,11 @@ class RegistroType:
             Lista de valores del registro
         """
         if len(data) < self.size:
-            raise ValueError(f"Se esperaban al menos {self.size} bytes, se recibieron {len(data)}")
+            raise ValueError(
+                f"Se esperaban al menos {self.size} bytes, se recibieron {len(data)}"
+            )
 
-        unpacked = struct.unpack(self.struct_format, data[:self.size])
+        unpacked = struct.unpack(self.struct_format, data[: self.size])
 
         # Procesar valores
         record = []
@@ -177,16 +193,16 @@ class RegistroType:
             value = unpacked[i]
 
             # Procesar strings
-            if 's' in field_type:
+            if "s" in field_type:
                 if isinstance(value, bytes):
-                    value = value.decode('utf-8').rstrip('\x00')
+                    value = value.decode("utf-8").rstrip("\x00")
 
             # Detectar valores nulos
-            elif field_type in ('i', 'q', 'Q') and value == -2147483648:
+            elif field_type in ("i", "q", "Q") and value == -2147483648:
                 value = None
-            elif field_type in ('f', 'd') and math.isnan(value):
+            elif field_type in ("f", "d") and math.isnan(value):
                 value = None
-            elif field_type in ('b', '?') and value == -128:
+            elif field_type in ("b", "?") and value == -128:
                 value = None
 
             record.append(value)
@@ -248,7 +264,7 @@ class RegistroType:
 
             # Formatear strings
             if isinstance(value, bytes):
-                value = value.decode('utf-8').rstrip('\x00')
+                value = value.decode("utf-8").rstrip("\x00")
 
             print(f"{field_name}: {value}", end="")
             if i < num_fields - 1 and i < len(record) - 1:
