@@ -252,9 +252,7 @@ class SIFTEngine:
             for f in os.listdir(self.img_dir):
                 os.remove(os.path.join(self.img_dir, f))
 
-    # =========================================================================
     # API PÚBLICA
-    # =========================================================================
 
     def add_image(
         self, image_id: int, image_name: str, image_path: str
@@ -452,9 +450,7 @@ class SIFTEngine:
         self._initialize()
         return {"success": True, "message": "Índice limpiado"}
 
-    # =========================================================================
     # MÉTODOS INTERNOS
-    # =========================================================================
 
     def _save_descriptors(self, name: str, descriptors: np.ndarray):
         """Guarda descriptores de forma incremental."""

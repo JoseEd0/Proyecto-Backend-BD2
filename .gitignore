@@ -42,6 +42,10 @@ SIFT_struct/test_images_reescaladas
 SIFT_struct/query_images
 sift/
 
+# Audio - Archivos grandes generados
+Audio_struct/descriptors/
+Audio_struct/uploaded_audios/
+
 # Logs
 *.log
 logs/

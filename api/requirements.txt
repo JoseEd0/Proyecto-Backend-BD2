@@ -15,3 +15,7 @@ python-multipart==0.0.6
 
 # Para desarrollo y debugging (opcional)
 python-dotenv==1.0.0
+
+# Audio processing (MFCC extraction)
+librosa>=0.10.0
+soundfile>=0.12.0

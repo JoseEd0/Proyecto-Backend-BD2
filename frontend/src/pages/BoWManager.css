@@ -1,34 +1,40 @@
-/* Bag of Words Manager Styles */
-
+/* Bag of Words Manager - Modern Design matching Audio Manager */
 .bow-manager {
-  padding: 30px;
-  max-width: 1400px;
-  margin: 0 auto;
+  padding: 24px;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0d0d1a 100%);
+  color: #ffffff;
 }
 
+/* Header */
 .bow-header {
-  margin-bottom: 30px;
+  margin-bottom: 32px;
 }
 
 .bow-header h1 {
-  font-size: 32px;
+  font-size: 2rem;
   font-weight: 700;
-  color: white;
-  margin-bottom: 8px;
+  margin: 0;
+  background: linear-gradient(135deg, #06b6d4 0%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .bow-header p {
-  color: var(--text-secondary);
-  font-size: 14px;
+  margin: 4px 0 0;
+  color: #94a3b8;
+  font-size: 0.95rem;
 }
 
-/* Mensajes */
+/* Messages */
 .bow-message {
-  padding: 12px 16px;
-  border-radius: 6px;
+  padding: 14px 18px;
+  border-radius: 12px;
   margin-bottom: 20px;
-  font-size: 14px;
+  font-size: 0.9rem;
   animation: slideDown 0.3s ease;
+  border: 1px solid;
 }
 
 @keyframes slideDown {
@@ -43,117 +49,138 @@
 }
 
 .bow-message-success {
-  background: rgba(34, 197, 94, 0.1);
-  border: 1px solid rgba(34, 197, 94, 0.3);
-  color: #22c55e;
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: #10b981;
 }
 
 .bow-message-error {
   background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-color: rgba(239, 68, 68, 0.3);
   color: #ef4444;
 }
 
 .bow-message-info {
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  color: #3b82f6;
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.3);
+  color: #06b6d4;
 }
 
-/* Selector de colección */
+/* Collection Selector */
 .bow-collection-selector {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
+  backdrop-filter: blur(10px);
 }
 
 .bow-collection-selector label {
   font-weight: 600;
-  color: white;
+  color: #e2e8f0;
   min-width: 140px;
+  font-size: 0.9rem;
 }
 
 .bow-select {
   flex: 1;
-  padding: 10px 12px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  color: white;
-  font-size: 14px;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-size: 0.9rem;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
 }
 
 .bow-select:hover {
-  border-color: var(--primary-color);
+  border-color: rgba(6, 182, 212, 0.3);
 }
 
 .bow-select:focus {
   outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  border-color: #06b6d4;
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+}
+
+.bow-select option {
+  background: #1a1a3e;
+  color: #e2e8f0;
 }
 
 /* Tabs */
 .bow-tabs {
   display: flex;
   gap: 8px;
-  margin-bottom: 20px;
-  border-bottom: 2px solid var(--border-color);
+  margin-bottom: 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 0;
 }
 
 .bow-tab {
-  padding: 12px 20px;
+  padding: 14px 24px;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
-  font-size: 14px;
+  color: #64748b;
+  font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
-  transition: all 0.2s;
+  margin-bottom: -1px;
+  transition: all 0.3s ease;
 }
 
 .bow-tab:hover {
-  color: white;
-  background: rgba(255, 255, 255, 0.05);
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .bow-tab.active {
-  color: var(--primary-color);
-  border-bottom-color: var(--primary-color);
+  color: #06b6d4;
+  border-bottom-color: #06b6d4;
 }
 
-/* Contenido de tabs */
+/* Tab Content */
 .bow-tab-content {
   min-height: 400px;
 }
 
 /* Cards */
 .bow-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
   padding: 24px;
+  backdrop-filter: blur(10px);
 }
 
 .bow-card h2 {
-  font-size: 24px;
+  font-size: 1.25rem;
   font-weight: 600;
-  color: white;
-  margin-bottom: 8px;
+  color: #e2e8f0;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bow-card h2::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 100%);
+  border-radius: 50%;
 }
 
 .bow-description {
-  color: var(--text-secondary);
-  font-size: 14px;
+  color: #64748b;
+  font-size: 0.9rem;
   margin-bottom: 24px;
 }
 
@@ -166,34 +193,34 @@
 
 .bow-input {
   flex: 1;
-  padding: 12px 16px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  color: white;
-  font-size: 14px;
-  transition: all 0.2s;
+  padding: 14px 18px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
 }
 
 .bow-input:focus {
   outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  border-color: #06b6d4;
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
 }
 
 .bow-input::placeholder {
-  color: var(--text-secondary);
+  color: #475569;
 }
 
 /* Buttons */
 .bow-button {
-  padding: 12px 24px;
+  padding: 14px 28px;
   border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
   white-space: nowrap;
 }
 
@@ -203,75 +230,76 @@
 }
 
 .bow-button-primary {
-  background: var(--primary-color);
+  background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 100%);
   color: white;
+  box-shadow: 0 4px 16px rgba(6, 182, 212, 0.25);
 }
 
 .bow-button-primary:hover:not(:disabled) {
-  background: #5558d9;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(6, 182, 212, 0.35);
 }
 
 .bow-button-success {
-  background: #22c55e;
+  background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
   color: white;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.25);
 }
 
 .bow-button-success:hover:not(:disabled) {
-  background: #16a34a;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(16, 185, 129, 0.35);
 }
 
 .bow-button-delete {
-  padding: 6px 10px;
+  padding: 8px 12px;
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 4px;
+  border-radius: 8px;
   color: #ef4444;
-  font-size: 16px;
+  font-size: 1rem;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
 }
 
 .bow-button-delete:hover {
   background: rgba(239, 68, 68, 0.2);
-  transform: scale(1.1);
+  transform: scale(1.05);
 }
 
 /* File Input */
 .bow-file-input {
-  padding: 12px;
-  background: var(--bg-primary);
-  border: 2px dashed var(--border-color);
-  border-radius: 6px;
-  color: white;
-  font-size: 14px;
+  padding: 14px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 2px dashed rgba(6, 182, 212, 0.3);
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-size: 0.9rem;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
   width: 100%;
 }
 
 .bow-file-input:hover {
-  border-color: var(--primary-color);
-  background: rgba(99, 102, 241, 0.05);
+  border-color: #06b6d4;
+  background: rgba(6, 182, 212, 0.05);
 }
 
 .bow-file-input::file-selector-button {
-  padding: 8px 16px;
-  background: var(--primary-color);
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #06b6d4 0%, #8b5cf6 100%);
   border: none;
-  border-radius: 4px;
+  border-radius: 8px;
   color: white;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 0.85rem;
+  font-weight: 600;
   cursor: pointer;
-  margin-right: 12px;
+  margin-right: 14px;
+  transition: all 0.3s ease;
 }
 
 .bow-file-input::file-selector-button:hover {
-  background: #5558d9;
+  transform: scale(1.02);
 }
 
 /* Upload Form */
@@ -283,15 +311,15 @@
 
 /* Docs List */
 .bow-docs-list {
-  margin-top: 30px;
-  padding-top: 30px;
-  border-top: 1px solid var(--border-color);
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .bow-docs-list h3 {
-  font-size: 18px;
+  font-size: 1rem;
   font-weight: 600;
-  color: white;
+  color: #e2e8f0;
   margin-bottom: 16px;
 }
 
@@ -299,71 +327,77 @@
 .bow-table {
   width: 100%;
   border-collapse: collapse;
-  background: var(--bg-primary);
-  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
   overflow: hidden;
 }
 
 .bow-table thead {
-  background: rgba(99, 102, 241, 0.1);
+  background: rgba(6, 182, 212, 0.1);
 }
 
 .bow-table th {
-  padding: 12px 16px;
+  padding: 14px 18px;
   text-align: left;
-  font-size: 13px;
+  font-size: 0.8rem;
   font-weight: 600;
-  color: var(--primary-color);
+  color: #06b6d4;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .bow-table td {
-  padding: 12px 16px;
-  color: white;
-  font-size: 14px;
-  border-top: 1px solid var(--border-color);
+  padding: 14px 18px;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.bow-table tbody tr {
+  transition: background 0.2s ease;
 }
 
 .bow-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(6, 182, 212, 0.05);
 }
 
 /* Search Form */
 .bow-search-form {
-  margin-bottom: 30px;
+  margin-bottom: 24px;
 }
 
 /* Results */
 .bow-results {
-  margin-top: 30px;
+  margin-top: 32px;
 }
 
 .bow-results h3 {
-  font-size: 18px;
+  font-size: 1rem;
   font-weight: 600;
-  color: white;
+  color: #94a3b8;
   margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .bow-results-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
 }
 
 .bow-result-card {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 16px;
-  transition: all 0.2s;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 18px;
+  transition: all 0.3s ease;
 }
 
 .bow-result-card:hover {
-  border-color: var(--primary-color);
+  border-color: rgba(6, 182, 212, 0.3);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
 .bow-result-header {
@@ -374,28 +408,28 @@
 }
 
 .bow-result-id {
-  font-size: 14px;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: white;
+  color: #e2e8f0;
 }
 
 .bow-result-score {
-  font-size: 16px;
+  font-size: 1.1rem;
   font-weight: 700;
-  color: var(--primary-color);
+  color: #10b981;
 }
 
 .bow-result-bar {
-  height: 8px;
+  height: 6px;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .bow-result-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--primary-color), #22c55e);
-  border-radius: 4px;
+  background: linear-gradient(90deg, #06b6d4 0%, #10b981 100%);
+  border-radius: 3px;
   transition: width 0.5s ease;
 }
 
@@ -403,36 +437,36 @@
 .bow-collections-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 16px;
+  gap: 20px;
 }
 
 .bow-collection-card {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 20px;
-  transition: all 0.2s;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 22px;
+  transition: all 0.3s ease;
 }
 
 .bow-collection-card:hover {
-  border-color: var(--primary-color);
+  border-color: rgba(6, 182, 212, 0.3);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
 .bow-collection-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .bow-collection-header h3 {
-  font-size: 18px;
+  font-size: 1.1rem;
   font-weight: 600;
-  color: white;
+  color: #e2e8f0;
   margin: 0;
 }
 
@@ -449,30 +483,30 @@
 }
 
 .bow-stat-label {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: 0.85rem;
+  color: #64748b;
 }
 
 .bow-stat-value {
-  font-size: 16px;
+  font-size: 1rem;
   font-weight: 600;
-  color: white;
+  color: #e2e8f0;
 }
 
 .bow-stat-badge {
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
 .bow-badge-success {
-  background: rgba(34, 197, 94, 0.1);
-  color: #22c55e;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
 }
 
 .bow-badge-warning {
-  background: rgba(245, 158, 11, 0.1);
+  background: rgba(245, 158, 11, 0.15);
   color: #f59e0b;
 }
 
@@ -483,18 +517,18 @@
 }
 
 .bow-empty-state p {
-  font-size: 16px;
-  color: var(--text-secondary);
+  font-size: 1rem;
+  color: #64748b;
 }
 
 /* Responsive */
 @media (max-width: 768px) {
   .bow-manager {
-    padding: 20px;
+    padding: 16px;
   }
 
   .bow-header h1 {
-    font-size: 24px;
+    font-size: 1.5rem;
   }
 
   .bow-tabs {
@@ -504,6 +538,7 @@
   .bow-tab {
     flex: 1;
     min-width: 140px;
+    text-align: center;
   }
 
   .bow-form-group {

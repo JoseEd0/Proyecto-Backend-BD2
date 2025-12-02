@@ -1,5 +1,12 @@
 import { NavLink } from "react-router-dom";
-import { Database, Image, FileText, Table, Settings } from "lucide-react";
+import {
+  Database,
+  Image,
+  FileText,
+  Table,
+  Settings,
+  Music,
+} from "lucide-react";
 import "./Sidebar.css";
 
 export default function Sidebar() {
@@ -34,6 +41,14 @@ export default function Sidebar() {
         >
           <FileText size={20} />
           <span>BoW Documents</span>
+        </NavLink>
+
+        <NavLink
+          to="/audio"
+          className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+        >
+          <Music size={20} />
+          <span>Audio MFCC</span>
         </NavLink>
 
         <NavLink

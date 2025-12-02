@@ -18,6 +18,7 @@ import time
 import csv
 import io
 import shutil
+import pickle
 from pathlib import Path
 
 # Agregar el parser al path
@@ -27,6 +28,7 @@ try:
     from parser import create_sql_parser_engine
     from parser.unified_adapter import UnifiedDatabaseAdapter
     from SIFT_struct.SIFTEngine import SIFTEngine, SIFTConfig
+    from Audio_struct.AudioEngine import AudioEngine, AudioConfig
     from Heap_struct.Heap import Heap
     from inverted_index.indexer import SPIMIIndexer
     from inverted_index.query_engine import QueryEngine
@@ -70,9 +72,16 @@ bow_preprocessor = TextPreprocessor(language="spanish")
 BOW_DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "bow")
 os.makedirs(BOW_DATA_DIR, exist_ok=True)
 
+# Gestor de Audio (MFCC)
+audio_manager = None
+
 # Directorio para almacenar imágenes subidas
 IMAGES_DIR = os.path.join(os.path.dirname(__file__), "data", "sift", "uploaded_images")
 os.makedirs(IMAGES_DIR, exist_ok=True)
+
+# Directorio para almacenar audios subidos
+AUDIOS_DIR = os.path.join(os.path.dirname(__file__), "data", "audio", "uploaded_audios")
+os.makedirs(AUDIOS_DIR, exist_ok=True)
 
 
 # Modelos Pydantic para las requests/responses
@@ -1185,6 +1194,326 @@ async def delete_bow_collection(collection_name: str):
 
 
 # ==================== FIN ENDPOINTS BOW ====================
+
+
+# ==================== ENDPOINTS PARA AUDIO (MFCC) ====================
+
+
+@app.post("/api/audio/upload")
+async def upload_audio(
+    file: UploadFile = File(...),
+    audio_id: Optional[int] = Form(None),
+    audio_name: Optional[str] = Form(None),
+):
+    """Subir un audio y agregarlo al índice MFCC"""
+    global audio_manager
+
+    # Auto-crear motor si no existe
+    if audio_manager is None:
+        try:
+            print("[AUDIO] Creando motor por primera vez...")
+            base_dir = os.path.join(os.path.dirname(__file__), "..")
+
+            config = AudioConfig(
+                sample_rate=22050,
+                n_mfcc=13,
+                include_delta=True,
+                duration=30.0,
+                min_audios_for_vocab=5,
+                use_inverted_index=True,
+            )
+
+            audio_manager = AudioEngine(
+                base_dir=base_dir,
+                data_dir="api/data/audio",
+                config=config,
+                force_create=False,
+            )
+            print("[AUDIO] Motor creado exitosamente")
+        except Exception as e:
+            print(f"[AUDIO ERROR] {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error creando motor Audio: {str(e)}",
+            )
+
+    try:
+        print(f"[AUDIO] Procesando audio: {file.filename}")
+
+        # Validar que sea un archivo de audio
+        valid_types = ["audio/", "video/"]
+        if not file.content_type or not any(
+            file.content_type.startswith(t) for t in valid_types
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El archivo debe ser un audio. Tipo recibido: {file.content_type}",
+            )
+
+        # Auto-generar ID si no se proporciona
+        if audio_id is None:
+            all_audios = audio_manager.get_all_audios()
+            if all_audios:
+                max_id = max(a["id"] for a in all_audios)
+                audio_id = max_id + 1
+            else:
+                audio_id = 1
+
+        print(f"[AUDIO] Asignado ID: {audio_id}")
+
+        # Generar nombre si no se proporciona
+        if not audio_name:
+            audio_name = os.path.splitext(file.filename)[0]
+
+        # Guardar el audio en el directorio de uploads
+        file_extension = os.path.splitext(file.filename)[1]
+        audio_filename = f"{audio_name}_{audio_id}{file_extension}"
+        audio_path = os.path.join(AUDIOS_DIR, audio_filename)
+
+        # Guardar el archivo
+        print("[AUDIO] Guardando archivo en disco...")
+        with open(audio_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Agregar al índice MFCC
+        print("[AUDIO] Extrayendo características MFCC y actualizando índice...")
+        result = audio_manager.add_audio(audio_id, audio_name, audio_path)
+
+        if not result["success"]:
+            # Limpiar archivo si hay error
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+            raise HTTPException(
+                status_code=400, detail=result.get("error", "Error desconocido")
+            )
+
+        # Construir mensaje según el resultado
+        if result.get("has_vocabulary"):
+            message = "Audio subido e indexado exitosamente con TF-IDF"
+            print(f"[AUDIO] ✓ Audio indexado (ID: {audio_id})")
+        else:
+            audios_count = result.get("audios_count", 0)
+            message = f"Audio guardado. Vocabulario pendiente ({audios_count}/5 audios)"
+            print(f"[AUDIO] ✓ Audio guardado, vocabulario pendiente (ID: {audio_id})")
+
+        return {
+            "success": True,
+            "message": message,
+            "audio_id": audio_id,
+            "audio_name": audio_name,
+            "path": audio_path,
+            "has_vocabulary": result.get("has_vocabulary", False),
+            "n_frames": result.get("n_frames", 0),
+            "duration": result.get("duration", 0),
+            "audios_count": result.get("audios_count", 0),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[AUDIO ERROR] {str(e)}")
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error subiendo audio: {str(e)}")
+
+
+@app.post("/api/audio/search")
+async def search_similar_audios(
+    file: UploadFile = File(...), k: int = Form(10), use_inverted: bool = Form(True)
+):
+    """Buscar los k audios más similares a un audio query"""
+    global audio_manager
+
+    if audio_manager is None:
+        raise HTTPException(
+            status_code=400, detail="No hay motor de Audio inicializado"
+        )
+
+    query_temp_path = None
+    try:
+        # Validar que sea un archivo de audio
+        valid_types = ["audio/", "video/"]
+        if not file.content_type or not any(
+            file.content_type.startswith(t) for t in valid_types
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El archivo debe ser un audio. Tipo recibido: {file.content_type}",
+            )
+
+        # Guardar temporalmente el audio query
+        file_ext = os.path.splitext(file.filename)[1] or ".wav"
+        query_temp_path = os.path.join(
+            AUDIOS_DIR, f"query_temp_{int(time.time() * 1000)}{file_ext}"
+        )
+        with open(query_temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Realizar búsqueda KNN
+        result = audio_manager.search(query_temp_path, k=k, use_inverted=use_inverted)
+
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400, detail=result.get("error", "Error en búsqueda")
+            )
+
+        return {
+            "success": True,
+            "results": result["results"],
+            "count": len(result["results"]),
+            "k_requested": k,
+            "query_duration": result.get("query_duration", 0),
+            "search_method": "inverted_index" if use_inverted else "sequential",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error buscando audios similares: {str(e)}"
+        )
+    finally:
+        # Limpiar archivo temporal
+        if query_temp_path and os.path.exists(query_temp_path):
+            try:
+                os.remove(query_temp_path)
+            except Exception:
+                pass
+
+
+@app.get("/api/audio/list")
+async def list_all_audios():
+    """Listar todos los audios en el sistema"""
+    global audio_manager
+
+    if audio_manager is None:
+        return {
+            "success": True,
+            "audios": [],
+            "count": 0,
+            "message": "No hay motor de Audio inicializado",
+        }
+
+    try:
+        audios = audio_manager.get_all_audios()
+        return {"success": True, "audios": audios, "count": len(audios)}
+
+    except Exception as e:
+        print(f"[ERROR] Error listando audios: {str(e)}")
+        return {
+            "success": True,
+            "audios": [],
+            "count": 0,
+            "message": f"Error cargando audios: {str(e)}",
+        }
+
+
+@app.get("/api/audio/file/{audio_id}")
+async def get_audio_file(audio_id: int):
+    """Obtener el archivo de audio por su ID"""
+    global audio_manager
+
+    if audio_manager is None:
+        raise HTTPException(
+            status_code=400, detail="No hay motor de Audio inicializado"
+        )
+
+    try:
+        audios = audio_manager.get_all_audios()
+        audio_path = None
+
+        for audio in audios:
+            if audio["id"] == audio_id:
+                ruta = audio["ruta"]
+                audio_path = os.path.join(os.path.dirname(__file__), "..", ruta)
+                break
+
+        if not audio_path or not os.path.exists(audio_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Archivo de audio no encontrado para ID {audio_id}",
+            )
+
+        # Determinar media type
+        ext = os.path.splitext(audio_path)[1].lower()
+        media_types = {
+            ".mp3": "audio/mpeg",
+            ".wav": "audio/wav",
+            ".ogg": "audio/ogg",
+            ".flac": "audio/flac",
+            ".m4a": "audio/mp4",
+        }
+        media_type = media_types.get(ext, "audio/mpeg")
+
+        return FileResponse(
+            audio_path,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo archivo de audio: {str(e)}"
+        )
+
+
+@app.get("/api/audio/stats")
+async def get_audio_stats():
+    """Obtener estadísticas del índice de Audio"""
+    global audio_manager
+
+    if audio_manager is None:
+        return {"success": False, "message": "No hay motor de Audio inicializado"}
+
+    try:
+        stats = audio_manager.get_stats()
+        return {"success": True, "stats": stats}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error obteniendo estadísticas: {str(e)}"
+        )
+
+
+@app.post("/api/audio/rebuild")
+async def rebuild_audio_index():
+    """Reconstruir el índice de Audio completo"""
+    global audio_manager
+
+    if audio_manager is None:
+        raise HTTPException(
+            status_code=400, detail="No hay motor de Audio inicializado"
+        )
+
+    try:
+        result = audio_manager.rebuild_index()
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error reconstruyendo índice: {str(e)}"
+        )
+
+
+@app.delete("/api/audio/clear")
+async def clear_audio_index():
+    """Limpiar todo el índice de Audio"""
+    global audio_manager
+
+    if audio_manager is None:
+        raise HTTPException(
+            status_code=400, detail="No hay motor de Audio inicializado"
+        )
+
+    try:
+        result = audio_manager.clear_all()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error limpiando índice: {str(e)}")
+
+
+# ==================== FIN ENDPOINTS AUDIO ====================
 
 
 # Montar archivos estáticos del build de React

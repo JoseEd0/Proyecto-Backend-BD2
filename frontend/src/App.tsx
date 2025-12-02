@@ -8,6 +8,7 @@ import Layout from "./components/Layout";
 import SQLConsole from "./pages/SQLConsole";
 import SIFTManager from "./pages/SIFTManager";
 import BoWManager from "./pages/BoWManager";
+import AudioManager from "./pages/AudioManager";
 import TablesView from "./pages/TablesView";
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
           <Route path="sql" element={<SQLConsole />} />
           <Route path="sift" element={<SIFTManager />} />
           <Route path="bow" element={<BoWManager />} />
+          <Route path="audio" element={<AudioManager />} />
           <Route path="tables" element={<TablesView />} />
         </Route>
       </Routes>
